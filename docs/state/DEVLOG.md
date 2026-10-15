@@ -63,3 +63,20 @@ becomes the thing that costs them.
   those, sophistication is a smell.
 - **Rejected:** a lambda/registry pattern for the setup gates. Compact, but returns bare
   booleans, is not unit-testable per gate, and gives a dict key instead of a stack trace.
+
+## 2026-10-15 · Steps 0.1 + 0.2
+- **Built:** repo scaffold — Python 3.12 pinned, ruff/mypy-strict/pytest/hypothesis/
+  pre-commit/detect-secrets, 7 layer packages with docstrings, `make check`, the verify
+  harness (`make verify STEP=0_1`), CI workflow, `.importlinter` with 4 contracts.
+- **Decision:** 0.2 was built in the same session as 0.1, because `make check` calls
+  `lint-imports` — shipping 0.1 alone would have meant committing a gate that could not run.
+- **Decision:** the `domain-is-pure` contract forbids `time` and `datetime` too, not just
+  I/O libraries. Stricter than the plan text, and consistent with rule 5 (domain takes
+  timestamps as arguments). Consequence: domain modules needing `datetime` for annotations
+  must import it under `if TYPE_CHECKING:`. Step 0.4 will hit this first.
+- **Surprised by:** ruff's default rule set flagged two things worth fixing rather than
+  silencing — a magic number in the verify runner and a function-local import in a test.
+  Both fixed properly; no `noqa` added.
+- **Rejected:** `PLR0913` (too many arguments) stays ignored project-wide. Gate functions
+  take explicit values rather than a context object on purpose (docs/14 section 2), and
+  that rule fights the house style directly.

@@ -7,19 +7,23 @@ in `DEVLOG.md`.
 ---
 
 **Updated:** 2026-10-15
-**Phase:** 0 — Foundation (not started)
-**Active step:** none — planning complete, awaiting inputs
-**Package name:** `ativa` (placeholder — needs your decision)
+**Phase:** 0 — Foundation (in progress)
+**Active step:** 0.3 — configuration and secrets (next)
+**Package name:** `ativa` (placeholder — still needs your decision; renaming is one `sed`)
 
 ## Done
 
-- All planning docs: `docs/00` … `docs/12`
+- All planning docs: `docs/00` … `docs/14`
 - Agent operating rules: `CLAUDE.md`, `.claude/skills/` (5 skills)
+- **Step 0.1** — repo, Python 3.12, ruff/mypy/pytest/hypothesis/pre-commit, 7 layer
+  packages, `make check`, verify harness. Verified, both guards induced.
+- **Step 0.2** — `.importlinter`, 4 contracts. Verified, violation induced.
 
 ## Next action
 
-Step 0.1 — repository and toolchain. Needs no market access, no credentials.
-Then Step 0.3 — config and secrets scaffold.
+Step 0.3 — settings via pydantic-settings, `.env.example`, fail-fast on missing keys,
+log redaction filter + test. Needs no credentials to build; you fill `.env` later.
+Then 0.4 (value objects, `Money`), 0.5 (Docker Postgres + Redis), 0.6 (ports and fakes).
 
 ## Blocked on you
 
