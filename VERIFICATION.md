@@ -107,3 +107,51 @@ only after the file was populated. Fixed properly rather than patched around: lo
 take an explicit `env_file` parameter, and `tests/conftest.py` strips the five real
 credential variables from the environment for every test in the suite. A test that reads
 live credentials passes locally, fails in CI, and can print a real secret into test output.
+
+---
+
+## Step 0.4 — Value objects and the money rule · 2026-10-15 · PASS
+
+```
+STEP 0.4 — Value objects and the money rule
+  [PASS] float_money_rejected     = True                      (Money(10.5) must raise)
+  [PASS] float_multiply_rejected  = True                      (Money * 1.5 must raise)
+  [PASS] decimal_arithmetic_exact = 0.10 + 0.20 = 0.30        (not 0.30000000000000004)
+  [PASS] risk_sizing_exact        = 0.25% of 10,00,000 = 2500.00
+  [PASS] price_times_quantity     = ₹16,315.00                (125.50 x 130)
+  [PASS] half_option_rejected     = True                      (expiry without strike raises)
+  [PASS] option_renders_readably  = NIFTY 2026-10-20 25000 CE
+  [PASS] no_stray_clock_calls     = 0 outside adapter
+  [PASS] clock_is_tz_aware_utc    = True
+  [PASS] ist_conversion           = 04:00 UTC -> 09:30 IST
+  RESULT: PASS (10 of 10)
+```
+
+**A** — 53 tests pass (39 new). Money rejects floats on construction and on multiply;
+rounding is HALF_UP not bankers'; Price cannot be negative; `Price.times(Quantity)` is the
+only bridge to Money; a half-specified option cannot be constructed; every value object is
+frozen; the clock is tz-aware UTC and the fake does not move on its own.
+
+**R — induced failure (domain purity).** Appended a function to `domain/values.py` that
+read the clock and printed:
+
+```
+assert ['values.py: datetime.now('] == []     # tests/domain/test_domain_is_pure.py
+assert ['values.py: print('] == []
+[FAIL] no_stray_clock_calls = 1 outside adapter    # make verify STEP=0_4
+```
+
+Both guards fired independently, and the purity test caught the `print()` as well.
+Reverted; `make check` and verify green again.
+
+**Two check defects found and fixed during verification.** The clock-call scan initially
+(1) matched a compiled `.pyc` in `__pycache__`, and (2) matched prose in a docstring that
+wrote the call literally. Fixed by scanning `.py` sources directly in Python rather than
+shelling out to `grep` — BSD and GNU `grep` differ on directory-exclusion flags, so the
+check would have passed or failed depending on the machine. The docstring was reworded.
+A verify script that reports a false failure gets ignored, which is worse than not having
+it.
+
+**Architecture change made in this step.** The `domain-is-pure` import contract no longer
+forbids `datetime`. See `docs/state/DEVLOG.md` 2026-10-15 for the reasoning and the two
+compensating controls.

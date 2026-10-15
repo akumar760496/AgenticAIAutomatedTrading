@@ -109,3 +109,30 @@ becomes the thing that costs them.
   test. This is the class of bug that only appears after credentials arrive.
 - **Rejected:** having the redaction filter drop records containing secrets. Dropping the
   line hides the event as well as the secret; rewriting keeps the event.
+
+## 2026-10-15 · Step 0.4
+- **Built:** `domain/values.py` (Money, Price, Quantity, Percent), `domain/enums.py`,
+  `domain/instruments.py`, `ports/clock.py`, `adapters/clock.py`, `tests/fakes/clock.py`,
+  `tests/domain/test_domain_is_pure.py`, 39 tests, `scripts/verify/step_0_4.py`.
+- **Decision — architecture change.** The `domain-is-pure` import contract no longer bans
+  `datetime`. It banned a *type* when the real rule is that domain never *reads* a clock:
+  an option expiry is a `date`, and `InstrumentRef` cannot express one without it. The
+  alternative was `if TYPE_CHECKING` imports throughout, which breaks for any runtime-
+  validated model (step 2.1's Pydantic contracts) and makes the code harder to read for
+  no safety gain. Two compensating controls, both stricter than the import ban:
+  `tests/domain/test_domain_is_pure.py` scans every domain module for clock calls
+  (catching `date.today()`, which the import ban never did), and the step 0.4 verify
+  check scans `src/` for `datetime.now(` outside the clock adapter. Both were induced and
+  witnessed. **Reversible — say so and the ban comes back with TYPE_CHECKING imports.**
+- **Decision:** `Money` and `Price` are separate types even though both hold paise. A
+  price is per unit, money is an amount, and `Price.times(Quantity) -> Money` is the only
+  bridge. Confusing the two is how a position gets sized at one contract's premium.
+- **Decision:** rounding is ROUND_HALF_UP, not Python's default bankers' rounding. For
+  money, 0.005 rounding to 0.00 surprises people, and surprise in sizing code is expensive.
+- **Surprised by:** the verify check for stray clock calls produced two false positives —
+  a compiled `.pyc`, and prose in a docstring that wrote the call literally. Fixed by
+  scanning `.py` files in Python rather than shelling out to `grep`, whose
+  directory-exclusion flags differ between BSD and GNU. A check that cries wolf gets
+  ignored, which is worse than no check.
+- **Rejected:** storing `Percent` as a fraction. Every threshold in docs/06 is written in
+  percent, and converting at the boundary is where scale errors come from.

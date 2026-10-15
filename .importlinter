@@ -53,8 +53,13 @@ forbidden_modules =
     langchain
     apscheduler
     time
-    datetime
 allow_indirect_imports = False
+
+# Note: `datetime` is NOT forbidden here. Domain code legitimately uses date and
+# datetime as *types* (an option expiry is a date). The real rule is that domain
+# never *reads* a clock, and that is enforced two other ways, both stricter than an
+# import ban: ruff's DTZ rules, and tests/domain/test_domain_is_pure.py which greps
+# every domain module for clock calls. See docs/state/DEVLOG.md 2026-10-15.
 
 [importlinter:contract:ports-are-thin]
 name = Ports declare interfaces only - no concrete clients

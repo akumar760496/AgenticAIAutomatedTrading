@@ -8,7 +8,7 @@ in `DEVLOG.md`.
 
 **Updated:** 2026-10-15
 **Phase:** 0 — Foundation (in progress)
-**Active step:** 0.4 — value objects and the money rule (next)
+**Active step:** 0.5 — local infrastructure, Docker Postgres + Redis (next)
 **Package name:** `trading_desk` (decided 2026-10-15)
 
 ## Done
@@ -21,12 +21,15 @@ in `DEVLOG.md`.
 - **Step 0.3** — typed settings per concern, fail-fast naming missing keys, secret
   redaction filter, `tests/conftest.py` credential isolation. Verified 7/7, failure
   induced. **Dhan credentials are live in `.env` and load correctly.**
+- **Step 0.4** — `Money`/`Price`/`Quantity`/`Percent` (integer paise, floats rejected),
+  `InstrumentRef`, 8 enums, clock port + adapter + `FrozenClock` fake, domain purity test.
+  Verified 10/10, purity violation induced.
 
 ## Next action
 
-Step 0.4 — `Money` (integer paise), `Price`, `InstrumentRef`, enums, the clock port.
-Then 0.5 (Docker Postgres + Redis), 0.6 (ports and fakes) — which closes Phase 0 and
-opens Step 1.1, the chain snapshotter.
+Step 0.5 — `docker-compose.yml` with Postgres (TimescaleDB + pgvector) and Redis,
+alembic baseline, `make db-up` / `db-migrate` / `db-reset`. Then 0.6 (ports and fakes),
+which closes Phase 0 and opens Step 1.1, the chain snapshotter.
 
 ## Blocked on you
 
