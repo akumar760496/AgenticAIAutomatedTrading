@@ -92,3 +92,20 @@ becomes the thing that costs them.
   package is `trading_desk` (underscore). Different on purpose, not an inconsistency.
 - **Note:** done now rather than later on purpose — the rename touched 8 files today and
   would have touched every module written after it.
+
+## 2026-10-15 · Step 0.3
+- **Built:** `infra/config.py` (settings split by concern, SecretStr, fail-fast naming the
+  missing env vars), `infra/logging.py` (redaction filter), `.env.example`, 10 tests,
+  `scripts/verify/step_0_3.py`.
+- **Decision:** settings are split into Dhan / LLM / Telegram / Infra / App rather than one
+  object. A phased build needs Dhan credentials months before an Anthropic key exists, and
+  one object would force every key present from day one.
+- **Decision:** loaders take an explicit `env_file` parameter. Needed because pydantic
+  evaluates `model_config` at class-definition time, so patching a module constant in a
+  test does nothing.
+- **Surprised by:** a test silently read the real `.env` once it was populated — it passed
+  for the wrong reason while the file was empty. Fixed with the parameter plus a
+  `conftest.py` autouse fixture stripping the five real credential variables from every
+  test. This is the class of bug that only appears after credentials arrive.
+- **Rejected:** having the redaction filter drop records containing secrets. Dropping the
+  line hides the event as well as the secret; rewriting keeps the event.

@@ -64,3 +64,46 @@ I/O libraries, which is stricter than the plan text. Domain code takes timestamp
 arguments, so this holds — but it means a domain module needing `datetime` *as a type
 annotation* must import it under `if TYPE_CHECKING:`. Recorded here because the first
 domain module (step 0.4) will hit it.
+
+---
+
+## Step 0.3 — Configuration and secrets · 2026-10-15 · PASS
+
+```
+STEP 0.3 — Configuration and secrets
+  [PASS] env_example_committed     = True                (need true)
+  [PASS] env_example_keys          = 12 keys             (need all 12)
+  [PASS] dotenv_present_locally    = True                (need true, not committed)
+  [PASS] dhan_settings_load        = all three present   (need all three credentials)
+  [PASS] secret_redacted_from_logs = True                (need true)
+  [PASS] secret_hidden_in_repr     = True                (need true)
+  [PASS] run_mode                  = research            (need research)
+  RESULT: PASS (7 of 7)
+```
+
+**A** — 14 tests pass, `make check` green. Tests cover: settings load from env, missing
+settings name the env vars, `repr()` does not leak a secret, prefixed settings, redaction
+of both message and `%s` arguments, short values not registered, filter never drops a
+record.
+
+**R — induced failure (missing credentials).** Ran the loader with the Dhan variables
+unset and `env_file=None`, leaving the real `.env` untouched:
+
+```
+Dhan settings incomplete. Set these in .env: DHAN_API_KEY, DHAN_API_SECRET, DHAN_CLIENT_ID
+```
+
+Names every missing key, no `NoneType` three layers later.
+
+**R — real credentials load.** The populated `.env` loads: client id, API key and secret
+all present. **No value was read, printed or logged at any point** — the check reports
+presence only.
+
+**Defect found and fixed during verification.** The first version of
+`test_missing_dhan_settings_name_the_env_vars` patched the module-level `ENV_FILE`
+constant, but `model_config` is evaluated at class-definition time, so the patch did
+nothing and the test silently read the developer's **real** `.env` — which is why it failed
+only after the file was populated. Fixed properly rather than patched around: loaders now
+take an explicit `env_file` parameter, and `tests/conftest.py` strips the five real
+credential variables from the environment for every test in the suite. A test that reads
+live credentials passes locally, fails in CI, and can print a real secret into test output.

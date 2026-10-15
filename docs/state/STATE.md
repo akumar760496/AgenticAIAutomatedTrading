@@ -8,7 +8,7 @@ in `DEVLOG.md`.
 
 **Updated:** 2026-10-15
 **Phase:** 0 — Foundation (in progress)
-**Active step:** 0.3 — configuration and secrets (next)
+**Active step:** 0.4 — value objects and the money rule (next)
 **Package name:** `trading_desk` (decided 2026-10-15)
 
 ## Done
@@ -18,17 +18,20 @@ in `DEVLOG.md`.
 - **Step 0.1** — repo, Python 3.12, ruff/mypy/pytest/hypothesis/pre-commit, 7 layer
   packages, `make check`, verify harness. Verified, both guards induced.
 - **Step 0.2** — `.importlinter`, 4 contracts. Verified, violation induced.
+- **Step 0.3** — typed settings per concern, fail-fast naming missing keys, secret
+  redaction filter, `tests/conftest.py` credential isolation. Verified 7/7, failure
+  induced. **Dhan credentials are live in `.env` and load correctly.**
 
 ## Next action
 
-Step 0.3 — settings via pydantic-settings, `.env.example`, fail-fast on missing keys,
-log redaction filter + test. Needs no credentials to build; you fill `.env` later.
-Then 0.4 (value objects, `Money`), 0.5 (Docker Postgres + Redis), 0.6 (ports and fakes).
+Step 0.4 — `Money` (integer paise), `Price`, `InstrumentRef`, enums, the clock port.
+Then 0.5 (Docker Postgres + Redis), 0.6 (ports and fakes) — which closes Phase 0 and
+opens Step 1.1, the chain snapshotter.
 
 ## Blocked on you
 
-1. **Dhan Data API subscription (₹499+tax/month) + access token in `.env`** — the only
-   blocker for Step 1.1. Feed cap is a non-issue: 5,000 instruments/connection (ISS-001 closed)
+1. **Dhan Data API subscription (₹499 + GST/month)** — credentials are in `.env`, but the
+   paid plan is still required for live feed, option chain and historical bars (Step 1.1)
 2. Threshold sign-off: 1.5× ATR, IV rank 60/70/35, credibility 0.7 (`docs/06` §2)
 3. Capital figure and drawdown confirmation (`docs/07` blanks)
 4. Realistic weekly hours (under 5 → cut to index-only, `docs/10` §7)
