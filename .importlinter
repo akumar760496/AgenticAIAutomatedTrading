@@ -1,0 +1,70 @@
+# The dependency rule, enforced. See docs/01-architecture.md section 2.
+#
+# Imports point inward only:
+#     interfaces -> adapters -> application -> ports -> domain
+#
+# If a contract here is inconvenient, the design is wrong, not the contract.
+# Adding an ignore_imports entry is an architectural decision: write it in
+# docs/state/DEVLOG.md and ask first (see .claude/skills/architecture-guard).
+
+[importlinter]
+root_package = ativa
+include_external_packages = True
+
+[importlinter:contract:layers]
+name = Layered architecture, imports point inward
+type = layers
+layers =
+    ativa.interfaces
+    ativa.adapters
+    ativa.application
+    ativa.ports
+    ativa.domain
+
+[importlinter:contract:agents-stay-inside]
+name = Agents may import domain and ports only, never an adapter
+type = forbidden
+source_modules =
+    ativa.agents
+forbidden_modules =
+    ativa.adapters
+    ativa.interfaces
+    ativa.infra
+
+[importlinter:contract:domain-is-pure]
+name = Domain does no I/O - no network, DB, LLM, clock or dataframes
+type = forbidden
+source_modules =
+    ativa.domain
+forbidden_modules =
+    requests
+    httpx
+    aiohttp
+    anthropic
+    openai
+    redis
+    sqlalchemy
+    asyncpg
+    psycopg
+    pandas
+    polars
+    duckdb
+    langgraph
+    langchain
+    apscheduler
+    time
+    datetime
+allow_indirect_imports = False
+
+[importlinter:contract:ports-are-thin]
+name = Ports declare interfaces only - no concrete clients
+type = forbidden
+source_modules =
+    ativa.ports
+forbidden_modules =
+    requests
+    httpx
+    anthropic
+    redis
+    sqlalchemy
+    pandas
