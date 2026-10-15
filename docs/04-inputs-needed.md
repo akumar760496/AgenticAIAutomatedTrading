@@ -65,7 +65,7 @@ That's genuinely it to begin. Everything below can arrive while Phase 1 is being
 
 ## D. Decisions I need from you now (no credentials)
 
-9. **Package name** — the docs use `ativa` as a placeholder.
+9. **Package name** — decided: `trading_desk` (2026-10-15). No longer open.
 10. **Where it runs.** For v1, your Mac plus a small always-on box is fine; no static IP is
     needed because nothing places orders. For v2 you'll want the AWS Mumbai VM with an
     Elastic IP. Confirm you're happy to defer that cost.

@@ -123,7 +123,7 @@ process will crash one day.
 ## 5. Repo layout
 
 ```
-src/ativa/                        # "ativa" = package name; rename as you like
+src/trading_desk/                        # the package. Imports point inward only.
   domain/
     instruments/     symbol.py  contract.py  option.py  universe.py
     market/          bar.py  tick.py  quote.py  chain.py  regime.py

@@ -8,34 +8,34 @@
 # docs/state/DEVLOG.md and ask first (see .claude/skills/architecture-guard).
 
 [importlinter]
-root_package = ativa
+root_package = trading_desk
 include_external_packages = True
 
 [importlinter:contract:layers]
 name = Layered architecture, imports point inward
 type = layers
 layers =
-    ativa.interfaces
-    ativa.adapters
-    ativa.application
-    ativa.ports
-    ativa.domain
+    trading_desk.interfaces
+    trading_desk.adapters
+    trading_desk.application
+    trading_desk.ports
+    trading_desk.domain
 
 [importlinter:contract:agents-stay-inside]
 name = Agents may import domain and ports only, never an adapter
 type = forbidden
 source_modules =
-    ativa.agents
+    trading_desk.agents
 forbidden_modules =
-    ativa.adapters
-    ativa.interfaces
-    ativa.infra
+    trading_desk.adapters
+    trading_desk.interfaces
+    trading_desk.infra
 
 [importlinter:contract:domain-is-pure]
 name = Domain does no I/O - no network, DB, LLM, clock or dataframes
 type = forbidden
 source_modules =
-    ativa.domain
+    trading_desk.domain
 forbidden_modules =
     requests
     httpx
@@ -60,7 +60,7 @@ allow_indirect_imports = False
 name = Ports declare interfaces only - no concrete clients
 type = forbidden
 source_modules =
-    ativa.ports
+    trading_desk.ports
 forbidden_modules =
     requests
     httpx

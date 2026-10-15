@@ -83,7 +83,7 @@ def run() -> list[CheckResult]:
     present_layers = [
         layer
         for layer in EXPECTED_LAYERS
-        if (ROOT / "src" / "ativa" / layer / "__init__.py").is_file()
+        if (ROOT / "src" / "trading_desk" / layer / "__init__.py").is_file()
     ]
     dev_tools = _dev_dependency_names()
     missing_tools = [tool for tool in REQUIRED_DEV_TOOLS if tool not in dev_tools]

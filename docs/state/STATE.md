@@ -9,7 +9,7 @@ in `DEVLOG.md`.
 **Updated:** 2026-10-15
 **Phase:** 0 — Foundation (in progress)
 **Active step:** 0.3 — configuration and secrets (next)
-**Package name:** `ativa` (placeholder — still needs your decision; renaming is one `sed`)
+**Package name:** `trading_desk` (decided 2026-10-15)
 
 ## Done
 
@@ -28,11 +28,10 @@ Then 0.4 (value objects, `Money`), 0.5 (Docker Postgres + Redis), 0.6 (ports and
 ## Blocked on you
 
 1. Dhan API access enabled + **websocket instrument cap** (shapes Step 1.2's universe size)
-2. Package name to replace `ativa`
-3. Threshold sign-off: 1.5× ATR, IV rank 60/70/35, credibility 0.7 (`docs/06` §2)
-4. Capital figure and drawdown confirmation (`docs/07` blanks)
-5. Realistic weekly hours (under 5 → cut to index-only, `docs/10` §7)
-6. Decision-capture mechanism confirmation (`docs/11` §1.2)
+2. Threshold sign-off: 1.5× ATR, IV rank 60/70/35, credibility 0.7 (`docs/06` §2)
+3. Capital figure and drawdown confirmation (`docs/07` blanks)
+4. Realistic weekly hours (under 5 → cut to index-only, `docs/10` §7)
+5. Decision-capture mechanism confirmation (`docs/11` §1.2)
 
 ## Open risks being watched
 

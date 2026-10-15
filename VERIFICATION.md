@@ -28,7 +28,7 @@ import-linter 4 contracts, pytest 4 passed.
 `domain/__init__.py`. mypy failed as required:
 
 ```
-src/ativa/domain/__init__.py:8: error: Incompatible types in assignment
+src/trading_desk/domain/__init__.py:8: error: Incompatible types in assignment
   (expression has type "str", variable has type "int")  [assignment]
 ```
 
@@ -53,8 +53,8 @@ no I/O; ports stay thin.
 ```
 Broken contracts
 Domain does no I/O - no network, DB, LLM, clock or dataframes
-ativa.domain is not allowed to import httpx:
--   ativa.domain -> httpx (l.8)
+trading_desk.domain is not allowed to import httpx:
+-   trading_desk.domain -> httpx (l.8)
 ```
 
 Reverted; contracts green again.

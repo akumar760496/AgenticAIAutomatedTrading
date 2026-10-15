@@ -80,3 +80,15 @@ becomes the thing that costs them.
 - **Rejected:** `PLR0913` (too many arguments) stays ignored project-wide. Gate functions
   take explicit values rather than a context object on purpose (docs/14 section 2), and
   that rule fights the house style directly.
+
+## 2026-10-15 · Package rename
+- **Built:** `src/ativa` → `src/trading_desk` across the repo: package tree, `.importlinter`
+  contracts, `pyproject.toml`, verify script, scaffold test, `VERIFICATION.md`, `docs/01`,
+  `docs/04`, `STATE.md`.
+- **Decision:** `trading_desk` over `research_desk`. A trading desk does research *and*
+  executes, so the name still fits once v2 places orders — `research_desk` would have felt
+  wrong the day the order path landed.
+- **Decision:** distribution name is `trading-desk` (hyphen, PEP 508 convention), import
+  package is `trading_desk` (underscore). Different on purpose, not an inconsistency.
+- **Note:** done now rather than later on purpose — the rename touched 8 files today and
+  would have touched every module written after it.

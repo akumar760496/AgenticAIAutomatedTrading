@@ -9,11 +9,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import ativa
+import trading_desk
 
 LAYERS = ["domain", "ports", "application", "agents", "adapters", "infra", "interfaces"]
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "src" / "ativa"
+PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "src" / "trading_desk"
 
 
 def test_runs_on_python_3_12() -> None:
@@ -34,5 +34,5 @@ def test_every_layer_documents_what_belongs_in_it() -> None:
 
 
 def test_package_docstring_states_the_layer_rule() -> None:
-    assert ativa.__doc__ is not None
-    assert "inward" in ativa.__doc__
+    assert trading_desk.__doc__ is not None
+    assert "inward" in trading_desk.__doc__
