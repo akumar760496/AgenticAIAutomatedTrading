@@ -95,6 +95,10 @@ working on in `docs/10-build-plan.md`.
 append to `docs/state/DEVLOG.md`. A session that ends without updating state did not happen,
 because the next session cannot see it.
 
+**Never `git push` unless the user asks for it in that message.** Commit locally as each
+step finishes, then say the commits are ready and stop. The remote is public; publishing is
+the user's decision every time, and an earlier yes is not standing permission.
+
 **Skills** live in `.claude/skills/`. Use `build-step` to implement a step, `verify-step`
 to prove one is done, `architecture-guard` before adding a module, `issue-log` when
 something breaks. Load a skill when the task matches; don't inline its content here.
