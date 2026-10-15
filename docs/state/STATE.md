@@ -27,7 +27,8 @@ Then 0.4 (value objects, `Money`), 0.5 (Docker Postgres + Redis), 0.6 (ports and
 
 ## Blocked on you
 
-1. Dhan API access enabled + **websocket instrument cap** (shapes Step 1.2's universe size)
+1. **Dhan Data API subscription (₹499+tax/month) + access token in `.env`** — the only
+   blocker for Step 1.1. Feed cap is a non-issue: 5,000 instruments/connection (ISS-001 closed)
 2. Threshold sign-off: 1.5× ATR, IV rank 60/70/35, credibility 0.7 (`docs/06` §2)
 3. Capital figure and drawdown confirmation (`docs/07` blanks)
 4. Realistic weekly hours (under 5 → cut to index-only, `docs/10` §7)
