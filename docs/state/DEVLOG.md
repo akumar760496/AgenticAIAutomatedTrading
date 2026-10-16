@@ -159,3 +159,140 @@ becomes the thing that costs them.
 - **Known gap:** `make check` does not start Docker, so CI cannot catch a broken compose
   file. Only `make verify STEP=0_5` exercises infrastructure. Acceptable while the stack
   is two containers.
+
+## 2026-10-16 · Step 0.6 — Phase 0 complete
+- **Built:** 9 ports (`market_data`, `option_chain`, `news`+`filings`, `llm`, `notifier`,
+  `journal`, `broker`, `clock`), 9 fakes, `domain/market.py` and `domain/news.py` for the
+  types the ports return, a conftest network guard, 20 tests,
+  `scripts/verify/step_0_6.py`.
+- **Decision:** the broker port is `BrokerReadPort`, named so that adding writes means
+  adding a *new* port rather than a method. No `place_order` exists anywhere - not
+  commented out, absent - and the verify script fails if one appears on any port or fake.
+  This matters more than it looks: Dhan documents no read-only token scope, so the
+  credential in `.env` can trade. The control is the shape of the code.
+- **Decision:** ports return domain objects, never vendor payloads. `OptionChainPort`
+  returns `OptionChainSnapshot`, so when Dhan renames a field exactly one adapter changes.
+  That forced `domain/market.py` and `domain/news.py` to exist now rather than being
+  invented ad hoc in Phase 1.
+- **Decision:** the network guard blocks outbound sockets but permits loopback, so
+  `integration`-marked tests can still reach local Postgres and Redis. A test that hits
+  the network fails with a message naming the fix rather than a timeout.
+- **Decision:** greeks are floats while prices are integer paise. Greeks are model outputs
+  with no exact decimal value and no money is computed directly from them. Deliberate
+  exception to the no-floats rule, recorded so it is not mistaken for an oversight.
+- **Decision:** `ARG002` is ignored for `tests/fakes/**` only. A fake must match its
+  Protocol's signature even where it ignores an argument; dropping the parameter would
+  stop it satisfying the port.
+- **Surprised by:** the Phase 0 sweep failed step 0.5 because Docker containers had exited
+  while the machine slept. `restart: unless-stopped` does not help when Docker Desktop
+  itself is not running. `make db-up` fixes it, data intact - noted in VERIFICATION.md so
+  it is not re-diagnosed later.
+
+## 2026-10-16 · Step 1.1a
+- **Built:** `adapters/dhan/{client,token,chain}.py`, `application/universe.py`,
+  `config/universe_starter.yaml`, 20 tests, `scripts/verify/step_1_1a.py`.
+- **Live verified:** a real NIFTY chain - 235 strikes, spot 23146.15, expiry 2026-10-19,
+  greeks present. The fixture-based tests could only prove we parse what we *think* Dhan
+  sends; this proves what they actually send.
+- **Finding (ISS-004):** expiries are not always Tuesday. Holidays move them to the
+  previous trading day, confirmed against the live list and the 2026 holiday calendar.
+  **Nothing in this codebase may compute an expiry date.** The adapter already reads them
+  from the exchange, which is why the finding cost an afternoon rather than a quarter of
+  wrong backtests.
+- **Decision:** the Dhan option chain rate limit is one request every 3 seconds, so the
+  client spaces calls itself rather than trusting callers. Using 3.2s, not 3.0, because
+  the server measures arrival time. Consequence: a 27-instrument snapshot takes ~3
+  minutes, so 1.1b's scheduler treats a snapshot as a minutes-long job.
+- **Decision:** missing greeks and IV map to None, never 0.0. An illiquid strike has no
+  IV, and a zero would corrupt the IV-rank series permanently - the one series that
+  cannot be rebuilt.
+- **Decision:** the token source is a swappable provider. `StaticTokenProvider` (24-hour
+  token) works today; the unattended PIN+TOTP option puts the account PIN in .env and is
+  a deliberate decision deferred, not a default.
+- **Known caveat:** Dhan's chain response has no exchange timestamp, so `exchange_time`
+  equals `received_at`. Commented in the adapter so the equality is not read as a bug.
+
+## 2026-10-16 · Step 1.1b
+- **Built:** `ports/chain_archive.py`, `adapters/store/parquet_chain.py`,
+  `application/snapshotter.py`, `adapters/notify/logging_notifier.py`,
+  `scripts/snapshot_once.py`, 24 tests, `scripts/verify/step_1_1b.py`.
+- **Live:** captured 2/2 instruments, 1210 rows, written to
+  `data/chains/date=2026-10-16/underlying=*/snapshot_HHMM.parquet`.
+- **Bug found live (and fixed):** the step 0.3 redaction filter stringified every log
+  argument, breaking httpx's `%d` status format. Only our own `%s`-only log lines had
+  exercised it. Now redacts strings only; two regression tests added.
+- **Bug found live (and fixed):** Dhan sends `0.0` rather than null for strikes it has not
+  priced. Storing those would have dragged the IV-rank percentile down permanently for
+  every unquoted strike. Exact zero now maps to None. **This is the docs/12 section 6
+  failure mode exactly** - "0 nulls of 740" read as a clean capture and meant the opposite.
+- **Bug found live (and fixed):** polars inferred the Parquet schema from the first rows,
+  which had no greeks, then failed on the first real float. Schema is now declared, which
+  also keeps column types identical across a multi-year archive.
+- **Decision:** partitions are keyed by IST trading date, not UTC. A trading day is an IST
+  concept, and a late-evening run would otherwise land under the previous UTC date.
+- **Decision:** the snapshotter catches broadly in `_capture_one`. The one place it is
+  right: one instrument failing must not cost the other 26, and an unexpected exception
+  type is exactly the case that must not take the run down.
+- **Decision:** alerts go to a `LoggingNotifier` until Telegram exists in step 3.5. A log
+  line a human may not read beats a report that does not exist.
+
+## 2026-10-16 · Instrument master (permanent fix for the universe)
+- **Built:** `adapters/dhan/instruments.py` (downloads and caches Dhan's 34MB scrip
+  master), `domain/instruments.py` gains `UnderlyingInfo` and `InstrumentCatalogue`,
+  `application/universe.py` rewritten to resolve symbols against the master.
+- **Decision:** config lists symbols only. Security ids and lot sizes are resolved from
+  the master at runtime. Neither is guessable - NIFTY is id 13 in the index segment and
+  26000 in the derivatives segment, and the chain API wants the index one.
+- **Finding:** TATAMOTORS has no listed options. Removed from the starter universe. A
+  hand-written list would have carried it until a snapshot silently failed every day.
+- **Finding:** 218 NSE underlyings have listed options; NIFTYFPI has no index-segment
+  row, so its chain cannot be requested. Unresolvable symbols are returned in
+  `InstrumentCatalogue.unresolved` rather than skipped, because a symbol that vanishes
+  silently is a gap nobody notices until the IV history is needed.
+- **The layering rule earned its keep:** the first version had `application` importing
+  the Dhan adapter for the catalogue types. `import-linter` failed the build. The right
+  fix was moving the types to `domain/` - they describe what exists to trade, which is a
+  domain fact; only the downloading is adapter work.
+
+## 2026-10-16 · Rate limiting (permanent fix for 429s)
+- **Finding:** a full 26-instrument run at the documented 3s spacing (we used 3.2s) got
+  HTTP 429 on two instruments. The documented limit is a floor, not a guarantee, and the
+  expiry-list calls share the same budget.
+- **Fix:** interval widened to 4.5s, plus retry-on-429 with 10/30/60s backoff. Only 429
+  is retried: retrying a bad token or a bad instrument burns the rate-limit budget for
+  everything else.
+- **Verified:** 26/26 instruments, 4942 rows, 3m51s, clean. The partial-capture path also
+  proved itself first - it warned loudly and named both failures rather than leaving a
+  silent gap.
+- **Consequence:** a full run takes ~4 minutes. Irrelevant for a job that fires three
+  times a day, and the scheduler in 1.1c must allow for it.
+
+## 2026-10-17 — step 1.1c verified live: the app authenticates and schedules itself
+
+- **Ran `trading-desk run` against the real stored token.** No browser opened: the grant
+  from the previous evening was still usable, which is the behaviour the design intended -
+  a login is asked for only when there is no usable token.
+- **Measured the consent token's life: exactly 24 hours** (issued 23:46 IST 16th, expires
+  23:46 IST 17th). This answers the question ISS-005 was opened to settle. One login
+  covers a whole trading session's three captures, so the scheduler is viable as built;
+  see ISS-005 for what is still unresolved (multi-day unattended running).
+- **Found and fixed: operational output was invisible under redirection.** The first run
+  was piped to a file and logged only the apscheduler lines - every `print` was missing.
+  Cause: logging writes to stderr, which Python keeps line-buffered when redirected,
+  while stdout is block-buffered, so the `print` output sat in a buffer that a
+  long-running scheduler never flushes. `PYTHONUNBUFFERED=1` showed the missing lines and
+  confirmed the diagnosis.
+  - **Fix:** operational output in `interfaces/cli.py` now goes through
+    `logging.getLogger("trading_desk.app")`. `print` survives only for usage errors, on
+    stderr, where it belongs. `ensure_valid_token` keeps its own logger default rather
+    than being handed `print`.
+  - **Why it matters beyond tidiness:** this is the output path for an unattended job.
+    Under `nohup` or `launchd` every capture summary and every per-instrument failure
+    would have been silently discarded - the project would have lost precisely the
+    evidence that a capture went wrong.
+- **Not provable today:** 2026-10-17 is a Saturday, so `trading-desk snapshot` correctly
+  logged `market closed (Saturday) - skipping capture` and captured nothing. The calendar
+  guard is therefore verified; the live capture path is not re-verified today. It was
+  verified on the 16th (26 files under `data/chains/date=2026-10-16`).
+- **Still open:** `config/holidays.yaml` is `verified: false` and the app warns about it at
+  every startup, by design.

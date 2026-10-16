@@ -68,3 +68,35 @@ class InstrumentRef:
         # Readable in a briefing: NIFTY 2026-10-20 25000 CE
         short_right = "CE" if right is OptionRight.CALL else "PE"
         return f"{self.symbol} {self.expiry} {strike.rupees():g} {short_right}"
+
+
+@dataclass(frozen=True)
+class UnderlyingInfo:
+    """One underlying that has listed options, as the exchange defines it.
+
+    A domain concept, not a Dhan one: these are facts about what exists to trade.
+    The adapter that downloads an instrument master builds these; nothing else
+    needs to know where they came from.
+    """
+
+    symbol: str
+    security_id: str
+    lot_size: int
+    is_index: bool
+
+
+@dataclass(frozen=True)
+class InstrumentCatalogue:
+    """Everything with listed options, plus what could not be resolved.
+
+    Unresolved symbols are returned rather than skipped silently. Some listed
+    index options have no row in the index segment, so their chain cannot be
+    requested. That is a fact about the data worth seeing, not an error worth
+    stopping for.
+    """
+
+    underlyings: dict[str, UnderlyingInfo]
+    unresolved: tuple[str, ...]
+
+    def __len__(self) -> int:
+        return len(self.underlyings)

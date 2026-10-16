@@ -196,3 +196,138 @@ Redis 7-alpine.
 **Not yet done:** `make check` does not start Docker, so the step 0.5 verify is the only
 place infrastructure is exercised. CI will not catch a broken compose file. Acceptable for
 now — revisit if the stack grows.
+
+---
+
+## Step 0.6 — Ports and fakes · 2026-10-16 · PASS
+
+```
+STEP 0.6 — Ports and fakes
+  [PASS] ports_defined         = 9              (need 9)
+  [PASS] fakes_defined         = 9              (one per port)
+  [PASS] every_port_has_a_fake = all satisfied  (need 0 orphans)
+  [PASS] no_order_methods      = none           (v1 cannot place an order)
+  [PASS] no_order_adapter_file = none           (FR-13.6)
+  [PASS] suite_passes_offline  = 73 passed      (network blocked)
+  RESULT: PASS (6 of 6)
+```
+
+**A** — 73 tests pass (20 new). Each fake is assigned to its Protocol-typed variable, which
+is a real structural check rather than a formality. Fakes raise instead of inventing data.
+The journal fake enforces append-only. Failure switches exist for chain fetch, delivery and
+feed staleness, so fail-closed paths can be exercised.
+
+**R — induced failure 1 (network access).** Added a test that opened a real socket:
+
+```
+tests.conftest.NetworkAccessError: A test tried to connect to 172.66.147.243.
+Use a fake from tests/fakes/ instead.
+```
+
+Deleted immediately. Loopback stays permitted so `integration`-marked tests can still
+reach local Postgres and Redis.
+
+**R — induced failure 2 (an order method).** Added `place_order` to the broker fake:
+
+```
+[FAIL] no_order_methods = found ['FakeBrokerRead.place_order']  (need 0)
+RESULT: FAIL (2 of 6)
+```
+
+Reverted. This check is FR-13.6 enforced by shape: `BrokerReadPort` exposes only
+`fetch_positions`, `fetch_trades` and `fetch_funds`. There is no interface in v1 through
+which an order could be placed, which matters because Dhan documents no read-only token
+scope - the token itself can trade.
+
+---
+
+## Phase 0 — complete · 2026-10-16
+
+```
+STEP 0.1 — Repository and toolchain      PASS (6 of 6)
+STEP 0.3 — Configuration and secrets     PASS (7 of 7)
+STEP 0.4 — Value objects and money rule  PASS (10 of 10)
+STEP 0.5 — Local infrastructure          PASS (8 of 8)
+STEP 0.6 — Ports and fakes               PASS (6 of 6)
+```
+
+(0.2 has no separate script; its contracts are checked on every `make check` and its
+violation was induced at the time.)
+
+**Observed during the phase sweep:** step 0.5 failed on first run because the containers
+had exited when the machine slept. `make db-up` restored them with data intact, and the
+step passed again. Worth knowing: **infrastructure checks fail after any reboot until
+`make db-up` runs**, despite `restart: unless-stopped`, because Docker Desktop itself does
+not start automatically.
+
+---
+
+## Step 1.1a — Dhan chain adapter and starter universe · 2026-10-16 · PASS
+
+```
+  [PASS] universe_loads         = 2 indices, 25 stocks pending
+  [PASS] lot_sizes_current      = {'NIFTY': 65, 'BANKNIFTY': 30}
+  [PASS] index_segment_mapping  = 6 index symbols
+  [PASS] rate_limiter_spacing   = waited 2.20s        (need >= 3.2s between calls)
+  [PASS] live_chain_with_greeks = 235 strikes, spot 23146.15, expiry 2026-10-19, greeks=yes
+  RESULT: PASS (5 of 5)
+```
+
+**X — live API.** A real NIFTY chain with greeks. This is the check the fixtures could not
+make: they prove we parse what we *think* Dhan sends.
+
+**X — finding (ISS-004).** Dhan's live NIFTY expiry list reads 2026-10-19 (Mon), 10-27
+(Tue), 11-03 (Tue), 11-09 (Mon), 11-17 (Tue). The plan says "Tuesday". **Expiries move to
+the previous trading day when the Tuesday is a holiday** - 2026-10-20 is Dussehra and
+2026-11-10 is Diwali Balipratipada. Nothing in this codebase may compute an expiry date;
+the adapter reads them from the exchange, which is why this cost an afternoon rather than
+a quarter of wrong backtests.
+
+---
+
+## Step 1.1b — Chain archive and snapshotter · 2026-10-16 · PASS
+
+```
+  [PASS] live_capture              = captured 2/2 instruments, 1210 rows
+  [PASS] rows_written              = 2420
+  [PASS] partitioned_by_ist_date   = ['date=2026-10-16']
+  [PASS] schema_is_fixed           = matches
+  [PASS] unpriced_strikes_are_null = 914 null, 0 stored as 0.0
+  [PASS] iv_values_are_plausible   = max IV 115.07
+  [PASS] prices_are_integer_paise  = Int64
+  RESULT: PASS (7 of 7)
+```
+
+**A** — 117 tests. Snapshotter: one failure does not stop the run, partial capture warns
+and names the instrument, total failure is CRITICAL, a write failure is recorded not
+swallowed, the nearest expiry is used. Archive: partition layout, one row per strike per
+side, exact paise round-trip, refusal to write an empty file.
+
+### Three defects found only by running it live
+
+**1. The redaction filter broke third-party logging.** It stringified every log argument,
+so httpx's `'HTTP Request: %s %s "%s %d %s"'` raised `%d format: a real number is
+required, not str` on every call. Never seen before because our own log lines only use
+`%s`. Fixed to redact string arguments only - a number cannot contain a secret - with two
+regression tests.
+
+**2. Dhan sends `0.0` for unpriced strikes, not null.** The first live capture stored 740
+of 740 BANKNIFTY rows with a non-null IV, many exactly 0.0 on strikes with no last price,
+no volume and no open interest. Those zeros would have dragged the IV-rank percentile down
+for every strike that was simply not quoted - **permanently, in the one series that cannot
+be rebuilt**. Exact zero is now treated as "not reported". After the fix: 914 of 2420 rows
+correctly null.
+
+This is the failure mode docs/12 section 6 describes: `IV nulls: 0 of 740` looked like a
+clean capture and was the opposite.
+
+**3. Parquet schema was inferred, and inference failed.** Early strikes had no greeks, so
+polars inferred Null and then raised `could not append value: -0.00084` when a real float
+arrived. The schema is now declared explicitly, which also guarantees identical column
+types across a multi-year archive.
+
+**Also corrected:** partitions are keyed by **IST** trading date, not UTC. A 22:50 IST run
+would otherwise land under the previous UTC date.
+
+**Still open:** only the two indices are captured. The 25 stocks need security ids from
+the instrument master, which is step 1.2.

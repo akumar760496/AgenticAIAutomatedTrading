@@ -47,6 +47,11 @@ class DhanSettings(BaseSettings):
     api_secret: SecretStr
     redirect_url: str = "http://localhost:8080/dhan/callback"
 
+    # A 24-hour token generated on web.dhan.co. Optional because the key+secret
+    # consent flow is an alternative - but that flow needs a browser login, so a
+    # token is what makes an unattended snapshotter possible today.
+    access_token: SecretStr | None = None
+
 
 class LlmSettings(BaseSettings):
     """Anthropic access and the spend cap. Needed from step 3.1."""

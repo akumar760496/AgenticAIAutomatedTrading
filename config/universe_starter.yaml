@@ -1,0 +1,47 @@
+# Starter universe: the symbols we want to capture.
+#
+# Symbols only. Security ids and lot sizes come from Dhan's instrument master at
+# runtime, because both change by exchange circular and neither is guessable -
+# NIFTY is id 13 in the index segment and 26000 in the derivatives segment.
+#
+# PROVISIONAL. Step 1.2 replaces the stock list with one ranked by 20-day average
+# option turnover and open interest. This list is a hand-written guess that exists
+# so capture can start today; every day without snapshots is IV history that
+# cannot be recovered.
+#
+# Known gap, found by running this: TATAMOTORS has no listed options and has been
+# removed. That is exactly the kind of error a hand-written list carries.
+
+version: 2
+effective_from: 2026-10-16
+source: "hand-written placeholder, replaced by universe_service in step 1.2"
+
+indices:
+  - NIFTY        # weekly expiry, moving earlier when the Tuesday is a holiday
+  - BANKNIFTY    # monthly only
+
+stocks:
+  - RELIANCE
+  - HDFCBANK
+  - ICICIBANK
+  - SBIN
+  - AXISBANK
+  - KOTAKBANK
+  - INFY
+  - TCS
+  - HCLTECH
+  - BHARTIARTL
+  - LT
+  - ITC
+  - HINDUNILVR
+  - MARUTI
+  - TATASTEEL
+  - JSWSTEEL
+  - HINDALCO
+  - BAJFINANCE
+  - SUNPHARMA
+  - M&M
+  - TITAN
+  - ADANIENT
+  - NTPC
+  - COALINDIA

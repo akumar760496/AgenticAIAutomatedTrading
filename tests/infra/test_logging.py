@@ -75,3 +75,26 @@ def test_filter_never_drops_a_record() -> None:
     record = _record(f"error with {SECRET}")
 
     assert SecretRedactingFilter().filter(record) is True
+
+
+def test_non_string_arguments_keep_their_type() -> None:
+    """Regression: stringifying args broke %d formatting in httpx's own logging."""
+    register_secret(SECRET)
+    record = _record('HTTP Request: %s "%s %d %s"', ("POST", "HTTP/1.1", 200, "OK"))
+
+    SecretRedactingFilter().filter(record)
+
+    assert isinstance(record.args, tuple)
+    assert record.args[2] == 200
+    assert record.getMessage() == 'HTTP Request: POST "HTTP/1.1 200 OK"'
+
+
+def test_string_arguments_are_still_redacted_alongside_numbers() -> None:
+    register_secret(SECRET)
+    record = _record("%s %d", (SECRET, 500))
+
+    SecretRedactingFilter().filter(record)
+
+    assert isinstance(record.args, tuple)
+    assert record.args[0] == REDACTED
+    assert record.args[1] == 500

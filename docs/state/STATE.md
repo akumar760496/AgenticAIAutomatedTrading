@@ -6,9 +6,9 @@ in `DEVLOG.md`.
 
 ---
 
-**Updated:** 2026-10-15
-**Phase:** 0 — Foundation (in progress)
-**Active step:** 0.6 — ports and fakes (next, closes Phase 0)
+**Updated:** 2026-10-16
+**Phase:** 1 — The data spine (next). **Phase 0 complete.**
+**Active step:** 1.1c done — next is 1.2 (universe service)
 **Package name:** `trading_desk` (decided 2026-10-15)
 
 ## Done
@@ -27,12 +27,27 @@ in `DEVLOG.md`.
 - **Step 0.5** — Docker Postgres (TimescaleDB 2.30.2 + pgvector 0.8.7) and Redis,
   alembic baseline, `make db-up/db-migrate/db-reset/db-shell`. Verified 8/8, database-down
   induced, clean rebuild from migrations proven.
+- **Step 0.6** — 9 ports, 9 fakes, network blocked in the test suite. Verified 6/6,
+  network access and an order method both induced. **Phase 0 is complete.**
+- **Step 1.1a** — Dhan client with the 3s rate limiter, token provider, chain adapter,
+  starter universe. Verified 5/5 **against live Dhan data**.
+- **Step 1.1b** — Parquet chain archive and the snapshotter with capture-health reporting.
+  Verified 7/7 live. **The archive is accumulating: 2 indices captured today.**
 
 ## Next action
 
-Step 0.6 — Protocols for every external dependency (market data, option chain, news,
-filings, LLM, notifier, journal, broker, clock) plus an in-memory fake for each, and a
-conftest wiring fakes by default. **Closes Phase 0 and opens Step 1.1, the snapshotter.**
+**Step 1.2 — the universe service.** Rank by option turnover and open interest instead
+of the hand-written starter list, so the 25 names earn their place in the universe.
+
+**Done in 1.1c, verified live 2026-10-17:** `trading-desk run` authenticates on startup
+and captures at 09:30, 12:30 and 15:15 IST on trading days, skipping weekends and
+holidays with a stated reason. Entry points: `make run`, `make snapshot`, `make login`.
+
+**The token question is settled enough to proceed.** A consent-flow token lasts exactly
+24 hours (measured, not documented), so one login covers a full session's three captures.
+`ensure_valid_token` refreshes when under an hour remains. Running unattended across
+several days would still need PIN+TOTP — a security decision left open, not a blocker for
+a schedule that is started once a day. See ISS-005.
 
 ## Blocked on you
 

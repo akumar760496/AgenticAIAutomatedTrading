@@ -12,7 +12,16 @@ dependencies = [
     "alembic>=1.13",
     "psycopg[binary]>=3.2",
     "redis>=5.1",
+    # Step 1.1: Dhan HTTP client and the Parquet chain archive.
+    "httpx>=0.27",
+    "polars>=1.12",
+    "pyyaml>=6.0",
+    # Step 1.1c: scheduling the snapshotter.
+    "apscheduler>=3.10,<4",
 ]
+
+[project.scripts]
+trading-desk = "trading_desk.interfaces.cli:main"
 
 [project.optional-dependencies]
 dev = [
@@ -24,6 +33,7 @@ dev = [
     "import-linter>=2.1",
     "pre-commit>=4.0",
     "detect-secrets>=1.5",
+    "types-pyyaml>=6.0",
 ]
 
 [build-system]
@@ -70,6 +80,13 @@ ignore = [
 "tests/**" = ["PLR2004", "S101", "ARG001"]
 # Verify scripts print by design - that is their entire output contract.
 "scripts/**" = ["T20"]
+# The CLI is the one place in src/ that talks to a terminal. Library code still
+# may not print: it takes an announce callback or uses the logger.
+"src/trading_desk/interfaces/cli.py" = ["T20"]
+# A fake or stub must match the signature it stands in for, even where it ignores
+# an argument. Dropping the parameter would stop it satisfying the port.
+"tests/fakes/**" = ["ARG002"]
+"tests/adapters/**" = ["ARG002", "ARG005"]
 
 [tool.ruff.lint.flake8-bugbear]
 # Pydantic field definitions legitimately call functions in defaults.
@@ -89,7 +106,7 @@ files = ["src", "tests", "scripts"]
 
 [[tool.mypy.overrides]]
 # Third-party packages without type stubs. Added only when a real import needs it.
-module = []
+module = ["apscheduler.*"]
 ignore_missing_imports = true
 
 # ---------------------------------------------------------------------------

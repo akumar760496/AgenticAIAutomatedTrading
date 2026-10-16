@@ -68,11 +68,21 @@ class SecretRedactingFilter(logging.Filter):
 
     @staticmethod
     def _redact_args(args: Any) -> Any:
-        """Args are a tuple for positional formatting, or a dict for %(name)s style."""
+        """Redact string arguments only, leaving other types as they are.
+
+        Non-strings are returned untouched because a number cannot contain a
+        secret, and converting one to str breaks the format specifier it was
+        written for: httpx logs `"%s %d %s"` with an int status, and stringifying
+        it raises "%d format: a real number is required, not str". That bug reached
+        a live run - it never showed up against our own log lines, which only use %s.
+        """
         if isinstance(args, dict):
-            return {key: redact(str(value)) for key, value in args.items()}
+            return {
+                key: (redact(value) if isinstance(value, str) else value)
+                for key, value in args.items()
+            }
         if isinstance(args, tuple):
-            return tuple(redact(str(value)) for value in args)
+            return tuple(redact(value) if isinstance(value, str) else value for value in args)
         return args
 
 

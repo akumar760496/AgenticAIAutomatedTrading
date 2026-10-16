@@ -1,5 +1,5 @@
 # Development commands. Every target assumes `make install` has been run once.
-.PHONY: help install check lint format types imports test test-cov verify verify-phase hooks clean db-up db-down db-migrate db-reset db-shell
+.PHONY: help install check lint format types imports test test-cov verify verify-phase hooks clean db-up db-down db-migrate db-reset db-shell run snapshot login
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -40,6 +40,15 @@ verify-phase:  ## Verify every step in a phase: make verify-phase PHASE=0
 		step=$$(basename $$f .py | sed 's/^step_//'); \
 		uv run python -m scripts.verify $$step || exit 1; \
 	done
+
+run:  ## Start the app: authenticate, then capture on schedule
+	uv run trading-desk run
+
+snapshot:  ## Authenticate and capture once, then exit
+	uv run trading-desk snapshot
+
+login:  ## Re-authenticate with Dhan deliberately
+	uv run trading-desk login --force
 
 db-up:  ## Start Postgres and Redis, wait until both are healthy
 	docker compose up -d --wait

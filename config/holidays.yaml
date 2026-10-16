@@ -1,0 +1,28 @@
+# NSE trading holidays.
+#
+# INCOMPLETE AND NEEDS VERIFICATION against the official NSE circular. The dates
+# below come from secondary sources and cover only what has been confirmed for
+# the rest of 2026. A missing holiday means one wasted capture attempt, which is
+# harmless; a wrongly listed trading day means a *missed* capture, which is not.
+# So when in doubt, leave a date out.
+#
+# Why this file exists at all: the snapshotter must not run on closed days, and
+# ISS-004 showed expiry dates shift around these dates too.
+
+version: 1
+source: "secondary sources, pending verification against the NSE circular"
+verified: false
+
+2026:
+  - date: 2026-10-02
+    reason: Mahatma Gandhi Jayanti
+  - date: 2026-10-20
+    reason: Dussehra
+  - date: 2026-11-10
+    reason: Diwali Balipratipada
+
+# Special sessions that are NOT normal trading days. Muhurat trading is a short
+# evening session; capturing it would put an outlier into the IV series.
+special_sessions:
+  - date: 2026-11-08
+    reason: Diwali Muhurat trading (Sunday, timings announced separately)
