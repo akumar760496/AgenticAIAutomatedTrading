@@ -1,0 +1,50 @@
+# Local development stack: one Postgres, one Redis.
+#
+# One database, not three. TimescaleDB (time series) and pgvector (embeddings) are
+# extensions on the same Postgres, so bars, news, journal and agent memory all live
+# in one place and can be joined. Three databases would mean three backups, three
+# restore drills and no joins.
+#
+#   make db-up        start
+#   make db-migrate   apply migrations
+#   make db-reset     destroy and recreate (deletes data - dev only)
+
+services:
+  postgres:
+    # Timescale's image ships both TimescaleDB and pgvector, which saves building our own.
+    image: timescale/timescaledb-ha:pg16
+    container_name: trading_desk_postgres
+    environment:
+      POSTGRES_USER: trading_desk
+      POSTGRES_PASSWORD: trading_desk
+      POSTGRES_DB: trading_desk
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/home/postgres/pgdata/data
+    healthcheck:
+      # Compose waits for this before reporting the service healthy, so `make db-migrate`
+      # straight after `make db-up` does not race the server's startup.
+      test: ["CMD-SHELL", "pg_isready -U trading_desk -d trading_desk"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: trading_desk_redis
+    ports:
+      - "6379:6379"
+    # No persistence on purpose. Redis is transport between processes; nothing durable
+    # lives here except the kill switch, and that is set fresh each time it is used.
+    command: redis-server --save "" --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

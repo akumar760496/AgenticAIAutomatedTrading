@@ -54,7 +54,9 @@ Three updates, all small:
    decision a future session would otherwise re-litigate.
 3. `VERIFICATION.md` — append the verify output if the step is complete.
 
-Commit as `[X.Y] <module>: <what changed>`.
+**Do not commit.** Leave everything uncommitted and finish by listing the files that
+changed, so the user can review the diff in their Source Control panel. Suggest
+`[X.Y] <module>: <what changed>` as the commit message and let them run it.
 
 ## Rules
 

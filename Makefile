@@ -1,5 +1,5 @@
 # Development commands. Every target assumes `make install` has been run once.
-.PHONY: help install check lint format types imports test test-cov verify verify-phase hooks clean
+.PHONY: help install check lint format types imports test test-cov verify verify-phase hooks clean db-up db-down db-migrate db-reset db-shell
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -40,6 +40,23 @@ verify-phase:  ## Verify every step in a phase: make verify-phase PHASE=0
 		step=$$(basename $$f .py | sed 's/^step_//'); \
 		uv run python -m scripts.verify $$step || exit 1; \
 	done
+
+db-up:  ## Start Postgres and Redis, wait until both are healthy
+	docker compose up -d --wait
+
+db-down:  ## Stop the containers, keep the data
+	docker compose down
+
+db-migrate:  ## Apply all migrations
+	uv run alembic upgrade head
+
+db-reset:  ## Destroy the database and rebuild it from migrations (DELETES DATA)
+	docker compose down -v
+	docker compose up -d --wait
+	uv run alembic upgrade head
+
+db-shell:  ## Open psql against the dev database
+	docker compose exec postgres psql -U trading_desk -d trading_desk
 
 hooks:  ## Run pre-commit over the whole repo
 	uv run pre-commit run --all-files

@@ -4,10 +4,14 @@ version = "0.1.0"
 description = "Agentic market-research and trading system for Indian equities and options"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    # Added per build step as they are needed. Phase 0 needs almost nothing:
-    # a settings loader (step 0.3) and typed models (step 0.4).
+    # Added per build step as they are needed.
     "pydantic>=2.9,<3",
     "pydantic-settings>=2.5,<3",
+    # Step 0.5: database and transport.
+    "sqlalchemy>=2.0,<3",
+    "alembic>=1.13",
+    "psycopg[binary]>=3.2",
+    "redis>=5.1",
 ]
 
 [project.optional-dependencies]

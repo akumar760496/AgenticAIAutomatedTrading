@@ -155,3 +155,44 @@ it.
 **Architecture change made in this step.** The `domain-is-pure` import contract no longer
 forbids `datetime`. See `docs/state/DEVLOG.md` 2026-10-15 for the reasoning and the two
 compensating controls.
+
+---
+
+## Step 0.5 — Local infrastructure · 2026-10-15 · PASS
+
+```
+STEP 0.5 — Local infrastructure
+  [PASS] compose_file_present  = True
+  [PASS] postgres_reachable    = connected
+  [PASS] timescaledb_installed = 2.30.2
+  [PASS] pgvector_installed    = 0.8.7
+  [PASS] required_extensions   = all present      (timescaledb, vector)
+  [PASS] migrations_applied    = ['0001']         (baseline)
+  [PASS] redis_reachable       = True
+  [PASS] redis_not_persisting  = save='' appendonly=no
+  RESULT: PASS (8 of 8)
+```
+
+**R — clean rebuild.** `make db-reset` destroyed the volume and rebuilt from migrations
+alone; extensions and migration history came back identical. This is the check that
+matters: it proves the database is reproducible from version control, not from a command
+someone remembers running once.
+
+**R — induced failure (database down).** Stopped the Postgres container:
+
+```
+[FAIL] postgres_reachable    = failed: OperationalError
+[FAIL] timescaledb_installed = absent
+[FAIL] required_extensions   = missing ['timescaledb', 'vector']
+RESULT: FAIL (5 of 8)
+```
+
+Restarted; 8 of 8 again. The checks fail rather than skip when infrastructure is absent —
+"the database was not up" is a failure of this step, not an excuse for it.
+
+**Versions pinned by this step:** TimescaleDB 2.30.2, pgvector 0.8.7, Postgres 16,
+Redis 7-alpine.
+
+**Not yet done:** `make check` does not start Docker, so the step 0.5 verify is the only
+place infrastructure is exercised. CI will not catch a broken compose file. Acceptable for
+now — revisit if the stack grows.

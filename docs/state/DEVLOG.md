@@ -136,3 +136,26 @@ becomes the thing that costs them.
   ignored, which is worse than no check.
 - **Rejected:** storing `Percent` as a fraction. Every threshold in docs/06 is written in
   percent, and converting at the boundary is where scale errors come from.
+
+## 2026-10-15 · Step 0.5
+- **Built:** `docker-compose.yml` (Postgres with TimescaleDB + pgvector, Redis), alembic
+  scaffolding and the 0001 baseline migration, `infra/db.py`, five `make db-*` targets,
+  `scripts/verify/step_0_5.py`.
+- **Decision:** one Postgres with both extensions, not separate databases. Bars, news,
+  journal and agent memory can then be joined, and there is one backup and one restore
+  drill rather than three.
+- **Decision:** the database URL is read from `.env` by `alembic/env.py` rather than
+  written into `alembic.ini`. A tracked config file should never be able to hold a
+  credential.
+- **Decision:** `downgrade()` on the baseline is a deliberate no-op. Dropping the
+  timescaledb extension would destroy every hypertable in the database - not a reasonable
+  response to rolling back one migration. `make db-reset` is the dev path to clean.
+- **Decision:** Redis runs with persistence off, and the verify script asserts it. Redis
+  is transport; durable state belongs in Postgres. If something important ends up in
+  Redis, that failing check is the signal.
+- **Decision:** migrations are hand-written, `target_metadata = None`, no autogenerate.
+  Autogenerate does not understand hypertables, and a time-series schema written by hand
+  is clearer than one diffed from models.
+- **Known gap:** `make check` does not start Docker, so CI cannot catch a broken compose
+  file. Only `make verify STEP=0_5` exercises infrastructure. Acceptable while the stack
+  is two containers.
