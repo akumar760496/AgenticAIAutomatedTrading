@@ -8,7 +8,7 @@ in `DEVLOG.md`.
 
 **Updated:** 2026-10-16
 **Phase:** 1 — The data spine (next). **Phase 0 complete.**
-**Active step:** 1.1c done — next is 1.2 (universe service)
+**Active step:** 1.2 built, awaiting a live survey on a trading day — then 1.3
 **Package name:** `trading_desk` (decided 2026-10-15)
 
 ## Done
@@ -36,8 +36,16 @@ in `DEVLOG.md`.
 
 ## Next action
 
-**Step 1.2 — the universe service.** Rank by option turnover and open interest instead
-of the hand-written starter list, so the 25 names earn their place in the universe.
+**Run the first real survey on a trading day:**
+
+```
+uv run trading-desk survey      # ~30 minutes, 218 underlyings
+```
+
+It refuses to run on a weekend or holiday (ISS-006: the feed serves the previous
+session's volume without saying so), so Monday is the first opportunity. Then read the
+diff it prints against the starter list — differences are expected and wanted. Nothing
+downstream changes until that file exists; the snapshotter keeps using the starter list.
 
 **Done in 1.1c, verified live 2026-10-17:** `trading-desk run` authenticates on startup
 and captures at 09:30, 12:30 and 15:15 IST on trading days, skipping weekends and
@@ -54,9 +62,27 @@ a schedule that is started once a day. See ISS-005.
 1. **Dhan Data API subscription (₹499 + GST/month)** — credentials are in `.env`, but the
    paid plan is still required for live feed, option chain and historical bars (Step 1.1)
 2. Threshold sign-off: 1.5× ATR, IV rank 60/70/35, credibility 0.7 (`docs/06` §2)
+2b. **Liquidity thresholds** in `config/exchange_rules.yaml` — turnover ₹50L, OI 50,000,
+   25% priced legs, 25 stocks. `verified: false`, and `verify 1_2` fails on that check by
+   design. Set permissive on purpose; tighten once the first survey shows the real spread
 3. Capital figure and drawdown confirmation (`docs/07` blanks)
 4. Realistic weekly hours (under 5 → cut to index-only, `docs/10` §7)
 5. Decision-capture mechanism confirmation (`docs/11` §1.2)
+
+## Verification sweep — 2026-10-17
+
+| Step | Result | Note |
+|---|---|---|
+| 0.1 toolchain | PASS 6/6 | |
+| 0.3 config & secrets | PASS 7/7 | |
+| 0.4 value objects | PASS 10/10 | clock check rewritten as an AST walk |
+| 0.5 infrastructure | PASS 8/8 | Postgres + Redis healthy |
+| 0.6 ports & fakes | PASS 6/6 | was undercounting ports; now 10 |
+| 1.1a chain adapter | PASS 5/5 | |
+| 1.1b archive & snapshotter | **7/8** | `live_capture` cannot pass on a non-trading day — re-run Monday |
+| 1.2 universe service | **6/7** | `thresholds_reviewed` needs your sign-off |
+
+Neither remaining failure is a defect: one needs a trading day, one needs a decision.
 
 ## Open risks being watched
 

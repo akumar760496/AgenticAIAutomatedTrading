@@ -296,3 +296,104 @@ becomes the thing that costs them.
   verified on the 16th (26 files under `data/chains/date=2026-10-16`).
 - **Still open:** `config/holidays.yaml` is `verified: false` and the app warns about it at
   every startup, by design.
+
+## 2026-10-17 — step 1.2: universe from measurement, not memory
+
+- **What it does.** `trading-desk survey` measures one nearest-expiry chain per F&O
+  underlying, ranks by premium turnover, and writes `config/universe.yaml` with the
+  measurement behind every included name and a reason for every excluded one. The
+  snapshotter reads the generated file when it exists and the hand-written starter list
+  when it does not, so a fresh clone still runs.
+- **Why premium turnover.** Not equity turnover, which measures the wrong market; not
+  notional, which is dominated by high-strike names; not OI alone, which is a stock
+  rather than a flow. Rejections recorded in the module docstring.
+- **The candidate set had to come from the exchange, not the archive.** Ranking from the
+  Parquet archive was the obvious move and is circular: the archive holds only the 26
+  names already being captured, so it would re-rank the guess and never discover anything.
+  The instrument master offers **218 underlyings with listed options** - that is the
+  candidate set, and the reason the survey costs ~30 minutes at the rate limit.
+- **Added a third floor that is not in the build plan: priced-leg fraction.** A chain can
+  report healthy turnover concentrated in two near-the-money strikes while most legs have
+  never traded. Turnover and OI both pass; the chain is still untradeable. 25% of legs
+  must carry an IV.
+
+### Two live findings, one of which invalidated code written the same hour
+
+- **A weekend survey does not return zeroes.** The first guard assumed it would: if most
+  names show zero turnover, refuse to rank. A live two-name run on Saturday measured NIFTY
+  at ₹5,126 cr premium turnover and RELIANCE at ₹224 cr - Friday's session, served
+  unchanged. The guard would never have fired.
+- **`exchange_time` cannot detect it either.** The obvious fix was to compare the chain's
+  own timestamp against the clock. Dhan stamps that field with the time it *answered the
+  request*: a 00:24 IST Saturday survey reported 00:24 IST Saturday over Friday's volume,
+  and the computed age was `-0.0` hours. The staleness check was built, tested, and then
+  removed the same session because the signal it relied on does not exist.
+- **Where freshness actually comes from: the trading calendar, in the caller.** The survey
+  now makes no claim about freshness and carries no timestamp on `LiquidityMeasure`, with
+  the reason in its docstring so the field is not helpfully re-added later. The CLI checks
+  `reason_closed(today)` before authenticating or sending a single request, and
+  `config/universe.yaml` records `measured_on`. Logged as ISS-006, including the part that
+  still needs watching: the archive's `exchange_time` column must never be read as a trade
+  time.
+- **Cost of finding it live rather than in a fixture:** about twenty minutes and one
+  deleted guard. Cost of not finding it: a universe ranked on an arbitrary past session,
+  looking entirely healthy. This is the docs/12 §6 "passing but broken" case again, and
+  the second time in two steps that a fixture could not have caught it.
+
+### Not delivered, deliberately
+
+- **20-day average turnover.** One day of archive exists. The survey is a point
+  measurement and the file records `window_days: 1`, so it cannot be mistaken for the
+  average the plan eventually wants.
+- **Six-month F&O-entrant and own-history exclusions.** The first needs listing dates the
+  instrument master does not carry; the second would exclude all 218 names today.
+- **NSE daily ban list.** Needs a source URL - a decision, not a default.
+- **Thresholds are unreviewed.** `config/exchange_rules.yaml` is `verified: false` and
+  `verify 1_2` fails on exactly that check, by design. They were set permissive so a first
+  real survey shows the shape of the distribution rather than excluding everything.
+
+## 2026-10-17 — re-ran every verification step; found three regressions
+
+Prompted by the question "are all scenarios working fine?". Running the full
+verification sweep rather than answering from memory turned up three things, none of
+which the test suite could see.
+
+- **Two `datetime.now()` calls outside the clock adapter** (`adapters/dhan/token_store.py`,
+  `adapters/dhan/login.py`), breaking CLAUDE.md rule 5. Introduced during the step 1.1c
+  token work; `verify 0_4` would have caught it immediately, but Phase 0 had not been
+  re-run since. Both now read through `SystemClock`, and `hours_remaining` takes an
+  injectable `now`.
+  - **The check itself was also wrong:** a literal text scan, which flagged the very
+    docstrings explaining the rule. Its own docstring admitted the flaw. Replaced with an
+    AST walk that sees calls only - and which additionally catches `dt.now()` after
+    `import datetime as dt` and `date.today()`, neither of which the text scan looked for.
+    Induced an aliased violation to prove it fires.
+- **`verify 0_6` was undercounting ports.** `ChainArchivePort` was added in step 1.1b and
+  never added to `EXPECTED_PORTS`, so "every port has a fake" had silently not covered it.
+  Ten ports live in nine files, because `ports/news.py` declares two; the count now says so.
+- **Two entry points could have archived a non-trading day.** The serious one. See ISS-006b:
+  the calendar guard existed only in the CLI, while a verify script and an on-demand script
+  wrote to the archive unchecked. Moved into `ChainSnapshotter.run()`, which is the point of
+  the write. Changing the constructor made mypy name all four call sites, which is how the
+  two unguarded ones were found.
+  - Moving the guard inward needed the IST date inside an application module, and importing
+    `to_ist` from `adapters/clock.py` broke the dependency rule. Rather than an exception,
+    `IST` and `to_ist` moved to `domain/timezones.py` - a timezone is reference data and a
+    conversion is arithmetic, so neither was ever adapter-shaped. `adapters/clock.py`
+    re-exports them so existing callers are untouched. Second time import-linter has forced
+    a correct move rather than a workaround.
+- **One data finding, logged as ISS-007.** `verify 1_1b` failed on `max IV 419.45`. Real data:
+  deep-ITM strikes that did not trade keep a stale `last` several times intrinsic value, and
+  the solver backs 350-420% out of it. ATM IV over the same archive is 6.2-35.5%, and turnover
+  is `last x volume` with volume 0 on every affected row, so both things the project depends on
+  are clean. The *check* was mis-scoped, not the data: it now bounds ATM IV and separately
+  asserts the implausible values only ever sit on untraded strikes.
+
+**Where the sweep stands:** 0.1, 0.3, 0.4, 0.5, 0.6, 1.1a all pass. 1.1b is 7/8 - the
+failure is `live_capture`, which cannot pass on a Saturday and must be re-run on a trading
+day. 1.2 is 6/7, the failure being the unreviewed liquidity thresholds, which is a decision
+rather than a defect.
+
+**Process note worth keeping:** every one of these was invisible to `make check`. 183 tests
+and four import contracts were green throughout. The verification harness earns its keep
+precisely because it checks claims the unit tests do not make.

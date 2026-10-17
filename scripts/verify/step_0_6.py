@@ -14,6 +14,7 @@ from tests import fakes
 
 from scripts.verify._runner import CheckResult
 from trading_desk.ports.broker import BrokerReadPort
+from trading_desk.ports.chain_archive import ChainArchivePort
 from trading_desk.ports.clock import Clock
 from trading_desk.ports.journal import JournalPort
 from trading_desk.ports.llm import LlmPort
@@ -26,10 +27,14 @@ TITLE = "Ports and fakes"
 
 ROOT = Path(__file__).resolve().parents[2]
 
-EXPECTED_PORT_COUNT = 9
+# Ten ports, nine files: ports/news.py declares both NewsPort and FilingsPort.
+# Counting files here instead of ports is what let ChainArchivePort go unchecked
+# from step 1.1b until a Phase 0 re-run in step 1.2 found the mismatch.
+EXPECTED_PORT_COUNT = 10
 
 EXPECTED_PORTS = [
     BrokerReadPort,
+    ChainArchivePort,
     Clock,
     FilingsPort,
     JournalPort,

@@ -5,11 +5,15 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
+import pytest
+
 from tests.fakes import FakeChainArchive, FakeNotifier, FakeOptionChain, FrozenClock
-from trading_desk.application.snapshotter import ChainSnapshotter
+from trading_desk.application.calendars import TradingCalendar
+from trading_desk.application.snapshotter import ChainSnapshotter, MarketClosedError
 from trading_desk.domain.enums import Exchange, OptionRight, Segment
 from trading_desk.domain.instruments import InstrumentRef
 from trading_desk.domain.market import OptionChainSnapshot, OptionQuote, OptionStrike
+from trading_desk.domain.timezones import to_ist
 from trading_desk.domain.values import Price
 from trading_desk.ports.notifier import AlertLevel
 
@@ -58,10 +62,17 @@ def _chain(instrument: InstrumentRef, strike_count: int = 3) -> OptionChainSnaps
     )
 
 
-def _snapshotter() -> tuple[ChainSnapshotter, FakeOptionChain, FakeChainArchive, FakeNotifier]:
+# NOW is 2026-10-16, a Thursday, so the default calendar is open and the existing
+# capture tests are unaffected by the trading-day guard.
+OPEN_CALENDAR = TradingCalendar(holidays=frozenset(), special_sessions=frozenset(), verified=True)
+
+
+def _snapshotter(
+    calendar: TradingCalendar = OPEN_CALENDAR,
+) -> tuple[ChainSnapshotter, FakeOptionChain, FakeChainArchive, FakeNotifier]:
     chains, archive, notifier = FakeOptionChain(), FakeChainArchive(), FakeNotifier()
     return (
-        ChainSnapshotter(chains, archive, notifier, FrozenClock(NOW)),
+        ChainSnapshotter(chains, archive, notifier, FrozenClock(NOW), calendar),
         chains,
         archive,
         notifier,
@@ -169,3 +180,52 @@ class TestExpirySelection:
         snapshotter.run([nifty])
 
         assert archive.written[0].expiry_date == EXPIRY.isoformat()
+
+
+class TestTradingDayGuard:
+    """The guard lives in the snapshotter because three entry points reach it.
+
+    Two of them - a verify script and an on-demand capture script - had no check
+    at all, and would have written a Saturday partition full of Friday's quotes.
+    """
+
+    def test_refuses_to_capture_on_a_holiday(self) -> None:
+        holiday = to_ist(NOW).date()
+        calendar = TradingCalendar(
+            holidays=frozenset({holiday}), special_sessions=frozenset(), verified=True
+        )
+        snapshotter, chains, archive, _ = _snapshotter(calendar)
+        nifty = _index("NIFTY", "13")
+        chains.add_chain(_chain(nifty), EXPIRY)
+
+        with pytest.raises(MarketClosedError, match="exchange holiday"):
+            snapshotter.run([nifty])
+
+        assert archive.written == []  # nothing written is the whole point
+
+    def test_refuses_on_a_weekend(self) -> None:
+        saturday = datetime(2026, 10, 17, 4, 0, tzinfo=UTC)
+        chains, archive, notifier = FakeOptionChain(), FakeChainArchive(), FakeNotifier()
+        snapshotter = ChainSnapshotter(
+            chains, archive, notifier, FrozenClock(saturday), OPEN_CALENDAR
+        )
+        nifty = _index("NIFTY", "13")
+        chains.add_chain(_chain(nifty), EXPIRY)
+
+        with pytest.raises(MarketClosedError, match="Saturday"):
+            snapshotter.run([nifty])
+
+        assert archive.written == []
+
+    def test_force_allows_a_deliberate_out_of_hours_capture(self) -> None:
+        saturday = datetime(2026, 10, 17, 4, 0, tzinfo=UTC)
+        chains, archive, notifier = FakeOptionChain(), FakeChainArchive(), FakeNotifier()
+        snapshotter = ChainSnapshotter(
+            chains, archive, notifier, FrozenClock(saturday), OPEN_CALENDAR
+        )
+        nifty = _index("NIFTY", "13")
+        chains.add_chain(_chain(nifty), EXPIRY)
+
+        health = snapshotter.run([nifty], force=True)
+
+        assert health.is_complete

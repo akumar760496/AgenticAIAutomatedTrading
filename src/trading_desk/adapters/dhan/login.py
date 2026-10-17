@@ -18,10 +18,11 @@ import subprocess
 import sys
 import webbrowser
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
+from trading_desk.adapters.clock import SystemClock
 from trading_desk.adapters.dhan.callback_server import wait_for_token_id
 from trading_desk.adapters.dhan.consent import DhanConsentFlow, TokenGrant
 from trading_desk.adapters.dhan.token_store import (
@@ -66,8 +67,14 @@ def open_in_browser(url: str) -> bool:
     return webbrowser.open(url)
 
 
-def hours_remaining(grant: TokenGrant) -> float:
-    return (grant.expiry_time - datetime.now(UTC)).total_seconds() / 3600
+def hours_remaining(grant: TokenGrant, now: datetime | None = None) -> float:
+    """Life left in a grant. `now` is injectable so tests need no monkeypatching.
+
+    Defaults through the clock adapter rather than calling datetime.now() here,
+    which is CLAUDE.md rule 5 and was caught by `verify 0_4` rather than by review.
+    """
+    reference = SystemClock().utc_now() if now is None else now
+    return (grant.expiry_time - reference).total_seconds() / 3600
 
 
 def load_valid_token(path: Path = DEFAULT_TOKEN_PATH) -> TokenGrant | None:

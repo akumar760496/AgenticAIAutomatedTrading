@@ -22,7 +22,20 @@ import yaml
 from trading_desk.domain.enums import Exchange, Segment
 from trading_desk.domain.instruments import InstrumentCatalogue, InstrumentRef
 
-DEFAULT_UNIVERSE_PATH = Path("config/universe_starter.yaml")
+STARTER_UNIVERSE_PATH = Path("config/universe_starter.yaml")
+GENERATED_UNIVERSE_PATH = Path("config/universe.yaml")
+
+
+def default_universe_path() -> Path:
+    """The generated universe once a survey has produced one, else the starter list.
+
+    A fallback rather than a hard switch, so a fresh clone runs before anyone has
+    spent half an hour on a survey. Which file was used is never guessed at: the
+    `source` field of the loaded request says so.
+    """
+    if GENERATED_UNIVERSE_PATH.is_file():
+        return GENERATED_UNIVERSE_PATH
+    return STARTER_UNIVERSE_PATH
 
 
 @dataclass(frozen=True)
@@ -59,7 +72,8 @@ class Universe:
         return self.instruments
 
 
-def load_universe_request(path: Path = DEFAULT_UNIVERSE_PATH) -> UniverseRequest:
+def load_universe_request(path: Path | None = None) -> UniverseRequest:
+    path = default_universe_path() if path is None else path
     if not path.is_file():
         raise FileNotFoundError(f"Universe config not found at {path}")
 

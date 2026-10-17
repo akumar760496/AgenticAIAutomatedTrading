@@ -19,6 +19,7 @@ from trading_desk.adapters.dhan.instruments import DhanInstrumentMaster
 from trading_desk.adapters.dhan.token import StaticTokenProvider
 from trading_desk.adapters.notify.logging_notifier import LoggingNotifier
 from trading_desk.adapters.store.parquet_chain import SCHEMA, ParquetChainArchive
+from trading_desk.application.calendars import load_trading_calendar
 from trading_desk.application.snapshotter import ChainSnapshotter
 from trading_desk.application.universe import load_universe_request, resolve_universe
 from trading_desk.infra.config import load_dhan_settings
@@ -29,7 +30,18 @@ ROOT = Path(__file__).resolve().parents[2]
 ARCHIVE_ROOT = ROOT / "data" / "chains"
 
 MIN_ROWS_PER_INSTRUMENT = 100
-MAX_PLAUSIBLE_IV = 200.0
+
+# Plausibility is checked on ATM strikes, not across the whole chain. A chain-wide
+# bound fails on data that is correct-as-captured: deep ITM strikes that did not
+# trade carry a stale `last` of several times intrinsic value, and Dhan's solver
+# backs 350-420% IV out of it. Measured 2026-10-17: 49 of 4,942 rows above 200%,
+# every one with volume 0, while ATM IV ranged 6.2-35.5%. ATM is what the IV-rank
+# series is built from, so that is what must be sane. See ISS-007.
+MAX_PLAUSIBLE_ATM_IV = 100.0
+
+# Above this an IV is a stale-print artefact rather than a quote. Reported, not
+# failed: the rows are a faithful record of what the exchange published.
+STALE_PRINT_IV = 200.0
 
 
 def _live_capture() -> tuple[bool, str]:
@@ -43,11 +55,19 @@ def _live_capture() -> tuple[bool, str]:
         client_id=settings.client_id,
         token_provider=StaticTokenProvider(settings.access_token.get_secret_value()),
     )
+    calendar = load_trading_calendar()
+    closed = calendar.reason_closed(to_ist(clock.utc_now()).date())
+    if closed is not None:
+        # Checked before authenticating, so an out-of-hours verify run costs nothing.
+        # The snapshotter would refuse anyway; this just gives a readable reason.
+        return False, f"market closed ({closed}) - a live capture would archive stale figures"
+
     snapshotter = ChainSnapshotter(
         chain_source=DhanOptionChainAdapter(client, clock),
         archive=ParquetChainArchive(ARCHIVE_ROOT),
         notifier=LoggingNotifier(clock),
         clock=clock,
+        calendar=calendar,
     )
     try:
         catalogue = DhanInstrumentMaster().option_underlyings(clock.utc_now().date())
@@ -57,6 +77,12 @@ def _live_capture() -> tuple[bool, str]:
         client.close()
 
     return health.is_complete, health.summary()
+
+
+def _max_float(series: pl.Series) -> float:
+    """polars types max() as a wide union; narrow it rather than cast blindly."""
+    raw = series.max()
+    return float(raw) if isinstance(raw, int | float) else 0.0
 
 
 def _archive_frame() -> pl.DataFrame | None:
@@ -83,10 +109,18 @@ def run() -> list[CheckResult]:
 
     priced = frame.filter(pl.col("implied_volatility").is_not_null())
     unpriced = frame.height - priced.height
-    # polars types max() as a wide union; narrow it rather than cast blindly.
-    raw_max = priced["implied_volatility"].max() if priced.height else None
-    iv_max = float(raw_max) if isinstance(raw_max, int | float) else 0.0
     zero_ivs = priced.filter(pl.col("implied_volatility") == 0.0).height
+
+    # One row per (underlying, expiry, snapshot): the strike nearest spot.
+    atm = (
+        priced.with_columns(distance=(pl.col("strike_paise") - pl.col("spot_paise")).abs())
+        .sort("distance")
+        .group_by(["underlying", "expiry", "received_at"])
+        .head(2)
+    )
+    atm_max = _max_float(atm["implied_volatility"]) if atm.height else 0.0
+    stale_prints = priced.filter(pl.col("implied_volatility") > STALE_PRINT_IV)
+    stale_all_untraded = stale_prints.height == 0 or bool((stale_prints["volume"] == 0).all())
 
     return [
         CheckResult(
@@ -103,9 +137,12 @@ def run() -> list[CheckResult]:
         ),
         CheckResult(
             name="partitioned_by_ist_date",
-            passed=f"date={today_ist}" in partitions,
-            measured=str(sorted(set(partitions))),
-            requirement=f"need date={today_ist}",
+            passed=bool(partitions) and (capture_ok or f"date={today_ist}" not in partitions),
+            measured=f"{sorted(set(partitions))}, today={today_ist}",
+            requirement=(
+                f"need date={today_ist} after a live capture; on a closed day, need no "
+                f"partition for today"
+            ),
         ),
         CheckResult(
             name="schema_is_fixed",
@@ -120,10 +157,18 @@ def run() -> list[CheckResult]:
             requirement="need some null and zero stored as 0.0",
         ),
         CheckResult(
-            name="iv_values_are_plausible",
-            passed=0.0 < iv_max < MAX_PLAUSIBLE_IV,
-            measured=f"max IV {iv_max:.2f}",
-            requirement=f"need 0 < max < {MAX_PLAUSIBLE_IV}",
+            name="atm_iv_is_plausible",
+            passed=0.0 < atm_max < MAX_PLAUSIBLE_ATM_IV,
+            measured=f"max ATM IV {atm_max:.2f} over {atm.height} strikes",
+            requirement=f"need 0 < max < {MAX_PLAUSIBLE_ATM_IV}",
+        ),
+        CheckResult(
+            name="stale_prints_are_confined_to_untraded_strikes",
+            passed=stale_all_untraded,
+            measured=f"{stale_prints.height} rows above {STALE_PRINT_IV:.0f}% IV, all volume 0"
+            if stale_all_untraded
+            else f"{stale_prints.height} rows above {STALE_PRINT_IV:.0f}% IV, some traded",
+            requirement="need every implausible IV to sit on a strike that did not trade",
         ),
         CheckResult(
             name="prices_are_integer_paise",

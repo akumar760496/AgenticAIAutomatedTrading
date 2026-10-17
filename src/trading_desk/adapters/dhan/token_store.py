@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import json
 import stat
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 
+from trading_desk.adapters.clock import SystemClock
 from trading_desk.adapters.dhan.consent import TokenGrant
 
 DEFAULT_TOKEN_PATH = Path("secrets/dhan_token.json")
@@ -66,10 +67,15 @@ class StoredTokenProvider:
         self._now_override = now
 
     def _now(self) -> datetime:
-        """Tz-aware UTC. The grant's expiry carries IST, so the comparison is safe."""
+        """Tz-aware UTC, read through the clock adapter.
+
+        CLAUDE.md rule 5: `datetime.now()` appears nowhere outside
+        adapters/clock.py. The grant's expiry carries IST, so the comparison
+        across zones is safe.
+        """
         if self._now_override is not None:
             return self._now_override
-        return datetime.now(UTC)
+        return SystemClock().utc_now()
 
     def __call__(self) -> str:
         grant = load_token(self._path)

@@ -6,6 +6,7 @@ try to make them and confirm they fail.
 
 from __future__ import annotations
 
+import ast
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -65,21 +66,35 @@ def _risk_sizing_is_exact() -> bool:
 def _clock_calls_outside_adapter() -> list[str]:
     """Only the clock adapter may read the system clock.
 
-    A literal text scan of .py sources - crude on purpose, so it is obvious what it
-    does. Reading files directly rather than shelling out to grep, because grep's
-    directory-exclusion flags differ between BSD and GNU and the check then passes
-    or fails depending on the machine.
+    Walks the AST rather than scanning text. The text version flagged its own
+    docstring the moment a comment explained what it looked for - and its docstring
+    said so, which is a sign the check was wrong rather than the comment. The AST
+    sees calls only, so prose about `datetime.now()` is free to exist.
 
-    One consequence: prose in a docstring must avoid writing the call literally,
-    or it flags itself.
+    Catches the aliased forms too: `dt.now()` after `import datetime as dt`, and
+    `date.today()`, which the text scan never looked for at all.
     """
+    banned = {"now", "today", "utcnow", "fromtimestamp"}
     offenders = []
+
     for module in sorted((ROOT / "src").rglob("*.py")):
         if "adapters/clock.py" in module.as_posix():
             continue
-        for number, line in enumerate(module.read_text().splitlines(), start=1):
-            if "datetime.now(" in line:
-                offenders.append(f"{module.name}:{number}")
+
+        tree = ast.parse(module.read_text(), filename=str(module))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            function = node.func
+            if not isinstance(function, ast.Attribute) or function.attr not in banned:
+                continue
+            # Only flag it when the receiver is a plain name - datetime.now(),
+            # dt.now(), date.today(). self._clock.now() is the correct pattern
+            # and must stay allowed.
+            receiver = function.value
+            if isinstance(receiver, ast.Name) and receiver.id in {"datetime", "date", "dt", "time"}:
+                offenders.append(f"{module.name}:{node.lineno}")
+
     return offenders
 
 

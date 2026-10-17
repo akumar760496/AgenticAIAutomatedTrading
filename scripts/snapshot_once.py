@@ -18,6 +18,7 @@ from trading_desk.adapters.dhan.login import ensure_valid_token, hours_remaining
 from trading_desk.adapters.dhan.token_store import StoredTokenProvider
 from trading_desk.adapters.notify.logging_notifier import LoggingNotifier
 from trading_desk.adapters.store.parquet_chain import ParquetChainArchive
+from trading_desk.application.calendars import load_trading_calendar
 from trading_desk.application.snapshotter import ChainSnapshotter
 from trading_desk.application.universe import load_universe_request, resolve_universe
 from trading_desk.infra.config import load_app_settings, load_dhan_settings
@@ -44,6 +45,7 @@ def main() -> int:
         archive=ParquetChainArchive(),
         notifier=LoggingNotifier(clock),
         clock=clock,
+        calendar=load_trading_calendar(),
     )
 
     catalogue = DhanInstrumentMaster().option_underlyings(clock.utc_now().date())

@@ -1,0 +1,29 @@
+# Liquidity thresholds for universe selection (step 1.2).
+#
+# CLAUDE.md rule 7: these are exchange-shaped numbers, so they live here with an
+# effective-from date rather than as literals in code.
+#
+# verified: false  — these are starting values, not signed-off ones. They were
+# chosen to be permissive enough that a first survey shows the shape of the
+# distribution rather than excluding everything. Tighten them once you have seen
+# one real survey's turnover spread. Changing a threshold changes which names the
+# system watches, so record the change in docs/state/DEVLOG.md.
+verified: false
+effective_from: 2026-10-17
+source: "starting values, pending review against a real survey"
+
+liquidity:
+  # Premium turnover = last price x volume, summed over every leg of the nearest
+  # expiry. Rupees. A chain below this cannot absorb a position without moving.
+  min_premium_turnover_rupees: 5000000
+
+  # Open interest summed over every leg, in units as the feed reports them.
+  min_open_interest: 50000
+
+  # Fraction of legs carrying an implied volatility, so a usable price. The floor
+  # that catches the "respectable turnover concentrated in three strikes" chain.
+  min_priced_fraction: 0.25
+
+  # How many stocks make the universe. Indices are listed separately and are not
+  # counted against this cap.
+  max_stocks: 25
