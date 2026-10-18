@@ -8,7 +8,7 @@ in `DEVLOG.md`.
 
 **Updated:** 2026-10-16
 **Phase:** 1 — The data spine (next). **Phase 0 complete.**
-**Active step:** 1.3a and 1.4 done — next is 1.3b (Dhan websocket), which needs a live session
+**Active step:** 1.3a, 1.4 and 1.6 done — next is 1.5 (news) or 1.3b (websocket, needs a live session)
 **Package name:** `trading_desk` (decided 2026-10-15)
 
 ## Done
@@ -98,6 +98,7 @@ a schedule that is started once a day. See ISS-005.
 | 1.2 universe service | **6/7** | `thresholds_reviewed` needs your sign-off |
 | 1.3a schema & bar builder | PASS 8/8 | |
 | 1.4 historical backfill | PASS 8/8 | 940 daily bars/name; close agrees with the chain spot |
+| 1.6 calendars | PASS 6/6 | expiry list audits the holiday file; found Guru Nanak missing |
 
 No defects outstanding: one closed market, one decision.
 

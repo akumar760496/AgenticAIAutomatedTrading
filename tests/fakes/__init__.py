@@ -13,6 +13,7 @@ from tests.fakes.bar_store import FakeBarStore
 from tests.fakes.broker import FakeBrokerRead
 from tests.fakes.chain_archive import FakeChainArchive
 from tests.fakes.clock import FrozenClock
+from tests.fakes.expiry_store import FakeExpiryStore
 from tests.fakes.history import FakeHistory
 from tests.fakes.journal import FakeJournal
 from tests.fakes.llm import FakeLlm
@@ -25,6 +26,7 @@ __all__ = [
     "FakeBarStore",
     "FakeBrokerRead",
     "FakeChainArchive",
+    "FakeExpiryStore",
     "FakeFilings",
     "FakeHistory",
     "FakeJournal",

@@ -15,11 +15,18 @@ if you never automate a single order.
 ### Tier 1 — Index
 | Instrument | Expiry | Lot size | Notes |
 |---|---|---|---|
-| NIFTY | **Weekly, Tuesday** + monthly | **65** | The only weekly index expiry on NSE |
-| BANKNIFTY | **Monthly only** (last Tuesday) | **30** | Weekly expiry was withdrawn — design accordingly |
+| NIFTY | **Weekly, Tuesday — moving earlier when that Tuesday is a holiday** + monthly | **65** | The only weekly index expiry on NSE |
+| BANKNIFTY | **Monthly only** (last Tuesday, same holiday shift) | **30** | Weekly expiry was withdrawn — design accordingly |
 
 Lot sizes are the post-January-2026-series values (Nifty 75→65, Bank Nifty 35→30). NSE
 expiry moved to Tuesday for its F&O from Sept 2025 (BSE/Sensex is Thursday).
+
+> **The Tuesday rule is not a rule you may compute from (ISS-004).** When the Tuesday is a
+> trading holiday the expiry moves to the previous trading day. The live list on 2026-10-18
+> read Mon 10-19, Tue 10-27, Tue 11-03, Mon 11-09, Tue 11-17, Mon 11-23 — three Tuesdays
+> displaced by Dussehra, Diwali Balipratipada and Guru Nanak Jayanti. **Every expiry date is
+> read from the exchange and never derived.** `verify 1_6` induces the weekday rule and
+> requires it to disagree with the venue, so the day someone "simplifies" this, CI objects.
 **Verify all of this against NSE circulars in Phase 1 and load it from
 `config/universe.yaml`, never hard-code it** — lot sizes and expiry days have changed twice
 in two years and will change again.

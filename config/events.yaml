@@ -1,0 +1,46 @@
+# Macro events that move the whole market, and the windows the gates avoid.
+#
+# CLAUDE.md rule 7: these are external facts with publication dates, so they are
+# config with provenance rather than literals in code.
+#
+# Each entry states where it came from. `verified: true` means the date was taken
+# from the issuing authority's own publication, and the url proves it. Anything
+# from a secondary source stays false and the gates can choose to treat it as
+# soft.
+
+version: 1
+
+events:
+  # RBI Monetary Policy Committee, FY2026-27. Six meetings, each running three
+  # days; the decision lands on the final day, which is the date recorded here.
+  # Source: RBI press release under Section 45ZI of the RBI Act, 1934.
+  - kind: RBI_POLICY
+    date: 2026-12-04
+    description: RBI MPC decision (meeting 2-4 December 2026)
+    verified: true
+    source: https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=62422
+
+  - kind: RBI_POLICY
+    date: 2027-02-05
+    description: RBI MPC decision (meeting 3-5 February 2027)
+    verified: true
+    source: https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=62422
+
+  # Earlier FY27 meetings - 8 April, 5 June, 5 August and 7 October 2026 - are in
+  # the same release but have already passed. They are omitted rather than kept,
+  # because a calendar of past events invites a backtest to treat them as known
+  # in advance.
+
+# Deliberately empty, with the reason, rather than filled from guesswork:
+#
+# CPI and IIP releases   - MoSPI publishes on a monthly schedule (CPI around the
+#                          12th, IIP around the 28th) but the exact dates come
+#                          from a release calendar not confirmed here. A gate
+#                          that avoids the wrong day is worse than no gate.
+# FOMC                   - the Federal Reserve publishes its own calendar; not
+#                          yet cross-checked against a primary source.
+# Union Budget           - customarily 1 February, but the date is set by
+#                          notification each year.
+# Company results dates  - these arrive through the NSE announcement feed, which
+#                          is step 1.5. Hand-typing a handful here would imply a
+#                          coverage that does not exist.

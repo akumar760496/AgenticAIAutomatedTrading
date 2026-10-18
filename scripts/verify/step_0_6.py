@@ -17,6 +17,7 @@ from trading_desk.ports.bar_store import BarStorePort
 from trading_desk.ports.broker import BrokerReadPort
 from trading_desk.ports.chain_archive import ChainArchivePort
 from trading_desk.ports.clock import Clock
+from trading_desk.ports.expiry_store import ExpiryStorePort
 from trading_desk.ports.history import HistoricalBarsPort
 from trading_desk.ports.journal import JournalPort
 from trading_desk.ports.llm import LlmPort
@@ -32,13 +33,14 @@ ROOT = Path(__file__).resolve().parents[2]
 # Ten ports, nine files: ports/news.py declares both NewsPort and FilingsPort.
 # Counting files here instead of ports is what let ChainArchivePort go unchecked
 # from step 1.1b until a Phase 0 re-run in step 1.2 found the mismatch.
-EXPECTED_PORT_COUNT = 12
+EXPECTED_PORT_COUNT = 13
 
 EXPECTED_PORTS = [
     BarStorePort,
     BrokerReadPort,
     ChainArchivePort,
     Clock,
+    ExpiryStorePort,
     HistoricalBarsPort,
     FilingsPort,
     JournalPort,

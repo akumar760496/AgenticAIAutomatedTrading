@@ -553,3 +553,83 @@ fails, positional `UTC` passes, keyword `tz=UTC` passes.
 
 **Ports are now 12** (added HistoricalBarsPort and BarStorePort), with a fake each, and
 `verify 0_6` updated in the same change rather than a day later.
+
+## 2026-10-18 — step 1.6: calendars, and the expiry list turns out to audit the holidays
+
+Taken ahead of 1.5 (news), which carries a decision that is the user's: task 3 says to
+check each source's licence terms, some of which prohibit automated storage. 1.6 is
+offline, deterministic and unblocks the Phase 2 gates.
+
+### The rule this step exists to enforce
+
+**Nothing computes an expiry date.** ISS-004 found the plan's "NIFTY weekly on Tuesday"
+contradicted by the venue. It is now enforced rather than merely followed: `verify 1_6`
+applies the weekday rule to the live list and **requires them to disagree**. A future
+simplification fails CI instead of quietly naming contracts that do not exist. `docs/06`
+corrected at the same time - it still read "Weekly, Tuesday" with no caveat, which is the
+sentence that caused the problem.
+
+### The dividend: the expiry list is evidence about the holiday calendar
+
+Reading the rule backwards, a weekly expiry that is *not* on a Tuesday means the exchange
+was shut that Tuesday. That makes the venue's own expiry list a primary source for the
+holiday file - stronger than any published calendar.
+
+Run against the live list it found **2026-11-24, Prakash Gurpurb Sri Guru Nanak Dev,
+missing from `config/holidays.yaml`** after sitting unnoticed through four verification
+sweeps. Both NIFTY and BANKNIFTY moved to Monday 11-23.
+
+It also settled a conflict the web could not. Published calendars disagreed on whether
+Diwali Balipratipada is 9 or 10 November. The expiry moved *to* Monday the 9th, which it
+would not have done if the 9th were shut - so the holiday is the 10th. Primary data
+resolving a secondary-source disagreement.
+
+`config/holidays.yaml` now states evidence per date: `expiry_shift` (proven by the venue,
+re-derived on every verify run) or `published` (believed, not proven). Three of five are
+expiry-proven; the two Friday holidays cannot be, since no weekly expiry falls on a Friday.
+
+### An implementation that looked equivalent and was not
+
+The first `displaced_expiries` scanned for Tuesdays *missing between* two listed expiries.
+It found 10-20 and 11-10 and silently missed **11-24** - the one whose Monday sits at the
+end of the published run, with no expiry after it to bracket against. The correct rule is
+simpler and has no edge: in the weekly run, an expiry that is not a Tuesday is itself the
+evidence, and the Tuesday it was moved off is the next one. Both behaviours are now in
+tests, including a long-weekend case where the expiry moves back four days to a Friday.
+
+The sparse tail needed guarding too. An expiry list runs weekly for about six weeks then
+jumps to monthly and quarterly contracts; treating that tail as weekly would read every
+skipped Tuesday as a holiday and invent months of closures. `weekly_expiries` ends the run
+at the first gap over ten days - ten rather than seven, because a week containing a
+holiday already produces an eight or nine day gap. BANKNIFTY, which is monthly only,
+correctly yields no displacements at all despite having a Monday expiry.
+
+### Sourcing
+
+- **RBI MPC dates: verified against the RBI's own press release** under Section 45ZI, with
+  the url in `config/events.yaml`. Two future meetings: 2026-12-04 and 2027-02-05. The four
+  earlier FY27 meetings are deliberately omitted rather than kept - a calendar of past
+  events invites a backtest to treat them as known in advance.
+- **NSE 2027 holidays: not written.** The circular was not published as of 2026-10-18 and
+  the third-party calendars that exist disagree with each other on Holi, Ambedkar Jayanti
+  and Good Friday. An unverified 2027 list is a wrongly-listed trading day waiting to
+  happen, and a missed capture cannot be recovered.
+- **CPI, IIP, FOMC, Budget: left empty with the reason in the file.** A gate that avoids
+  the wrong day is worse than no gate.
+- **Company results dates: deferred to 1.5**, where the announcement feed lives. The table
+  and query path are built so 1.5 drops into them; hand-typing a few would imply coverage
+  that does not exist.
+
+### A stale unit test, in the same family as the three stale verify checks
+
+`test_the_calendar_declares_whether_it_has_been_verified` asserted `verified is False` and
+broke the moment the calendar was actually verified. It recorded the fact of the day rather
+than the property. Rewritten to load two temporary files and assert the flag follows the
+file. **That is the fourth instance of this pattern** - 0.4's text scan, 0.6's port count,
+0.5's revision, now a unit test. Worth watching for anywhere an assertion names a literal
+that describes current state rather than intended behaviour.
+
+**Ports are now 13** (added ExpiryStorePort), fake and `verify 0_6` updated in the same
+change. Migration 0003 adds the `expiries` cache - the only thing in this step that earns a
+table, because holidays and macro events are published facts that belong in reviewable
+config, while expiries are fetched data with an age.

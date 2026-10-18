@@ -50,6 +50,15 @@ logged and work continues — no drive-by fixes inside a step.
 - **Mitigation already in place:** `DhanOptionChainAdapter.available_expiries()` reads the
   list from the exchange and never computes it. The adapter was written that way on
   principle; this is the evidence that the principle was right.
+- **Closed 2026-10-18, step 1.6.** The rule is now enforced rather than merely followed:
+  `verify 1_6` induces the weekday rule against the live list and requires them to
+  disagree, so a future "simplification" fails CI. `docs/06` has been corrected - it still
+  said "Weekly, Tuesday" with no caveat.
+- **Unexpected dividend:** the displacement works as evidence in the other direction. A
+  weekly expiry that is not on a Tuesday means the exchange was shut that Tuesday, which
+  makes the expiry list a primary source for the holiday calendar - better than any
+  published calendar, because it is the venue's own behaviour. That audit immediately
+  found 2026-11-24 (Guru Nanak Jayanti) missing from `config/holidays.yaml`.
 - **Status:** open - needs a docs/06 wording fix ("Tuesday, moving earlier for holidays")
   and a rule that nothing anywhere computes an expiry date.
 

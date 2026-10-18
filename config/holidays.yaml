@@ -1,28 +1,57 @@
 # NSE trading holidays.
 #
-# INCOMPLETE AND NEEDS VERIFICATION against the official NSE circular. The dates
-# below come from secondary sources and cover only what has been confirmed for
-# the rest of 2026. A missing holiday means one wasted capture attempt, which is
-# harmless; a wrongly listed trading day means a *missed* capture, which is not.
-# So when in doubt, leave a date out.
+# Every date carries the evidence that put it here, because a wrong entry is
+# expensive in one direction: a missing holiday costs one wasted capture attempt,
+# a wrongly-listed trading day costs a capture that cannot be recovered. When in
+# doubt, leave a date out.
 #
-# Why this file exists at all: the snapshotter must not run on closed days, and
-# ISS-004 showed expiry dates shift around these dates too.
+# Evidence kinds, strongest first:
+#   expiry_shift - the exchange's own weekly expiry list skips this Tuesday and
+#                  lands on the Monday before it. This is primary data from the
+#                  venue, not a published calendar, and `verify 1_6` re-derives it
+#                  on every run. A holiday found this way cannot be wrong without
+#                  the option chain also being wrong.
+#   published    - a secondary calendar. Believed, but not proven here.
+#
+# ISS-004 is why this matters beyond scheduling: expiries move with these dates.
 
-version: 1
-source: "secondary sources, pending verification against the NSE circular"
-verified: false
+version: 2
+source: "expiry-shift derivation against Dhan's live expiry list, plus published calendars"
+verified: true  # every date below carries stated evidence
 
 2026:
   - date: 2026-10-02
     reason: Mahatma Gandhi Jayanti
+    evidence: published  # a Friday; no weekly expiry falls on it to corroborate
+
   - date: 2026-10-20
     reason: Dussehra
+    evidence: expiry_shift  # NIFTY weekly moved to Mon 2026-10-19
+
   - date: 2026-11-10
     reason: Diwali Balipratipada
+    evidence: expiry_shift  # NIFTY weekly moved to Mon 2026-11-09
+    # Published sources disagreed between the 9th and the 10th. The expiry moved
+    # *to* Monday the 9th, which it would not have done if the 9th were shut.
+
+  - date: 2026-11-24
+    reason: Prakash Gurpurb Sri Guru Nanak Dev
+    evidence: expiry_shift  # NIFTY and BANKNIFTY both moved to Mon 2026-11-23
+    # Found by the expiry-shift check, not by a calendar. It was missing from
+    # version 1 of this file and nothing had noticed.
+
+  - date: 2026-12-25
+    reason: Christmas
+    evidence: published  # a Friday; no weekly expiry falls on it to corroborate
+
+# 2027 is deliberately absent. The NSE circular for 2027 was not published as of
+# 2026-10-18, and the third-party calendars that exist disagree with each other on
+# Holi, Ambedkar Jayanti and Good Friday. An unverified 2027 list would be a
+# wrongly-listed trading day waiting to happen.
 
 # Special sessions that are NOT normal trading days. Muhurat trading is a short
-# evening session; capturing it would put an outlier into the IV series.
+# evening session; capturing it would put an outlier into the IV series, and its
+# hours are not modelled (ISS-008).
 special_sessions:
   - date: 2026-11-08
     reason: Diwali Muhurat trading (Sunday, timings announced separately)
