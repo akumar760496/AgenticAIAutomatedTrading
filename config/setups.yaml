@@ -1,0 +1,96 @@
+# Setup thresholds. CLAUDE.md rule 7: these are rulebook numbers, so they live
+# here with an effective-from date rather than as literals in code.
+#
+# verified: false — these come from docs/06 §2, which is a considered starting
+# point, not a backtested one. Step 2.8 runs the historical dry run; until it
+# has, every number below is a hypothesis. Changing one changes which ideas get
+# briefed, so record the change and the date in docs/state/DEVLOG.md.
+#
+# The honest expectation from docs/06: the "not already priced" gate kills most
+# ideas. If the dry run shows the setups almost never fire, or fire constantly,
+# that is a threshold problem to fix at 2.8 — not after the agents are built.
+verified: false
+effective_from: 2026-10-19
+source: "docs/06-v1-scope.md section 2, pending the step 2.8 dry run"
+
+setup_a:
+  # A catalyst older than this is not news any more. Trading sessions, not
+  # calendar days: a Friday evening filing is still fresh on Monday.
+  max_sessions_since_catalyst: 2
+
+  # Only these count. An LLM will happily call anything a catalyst, so the list
+  # is closed and an unlisted type fails rather than being judged.
+  catalyst_types:
+    - EARNINGS_SURPRISE
+    - GUIDANCE_CHANGE
+    - LARGE_ORDER_WIN
+    - REGULATORY_DECISION
+    - MERGER_OR_ACQUISITION
+    - CREDIT_RATING_ACTION
+    - MANAGEMENT_EXIT
+
+  # "Sources say" stories are scored below this upstream and cannot trigger alone.
+  min_credibility: 0.7
+
+  # Move since the catalyst, in ATR(14) units. Above this the edge is already
+  # in the price. docs/06: "this gate kills most ideas, which is correct".
+  max_move_in_atr: 1.5
+
+  # Volume on the confirming day against its 20-day average.
+  min_volume_ratio: 1.5
+
+  # Never buy premium into an already-panicked chain.
+  max_iv_rank: 60.0
+
+  liquidity:
+    min_open_interest_lots: 500
+    # Bid-ask as a fraction of the option mid, per leg.
+    max_spread_fraction: 0.03
+
+  calendar:
+    # Stock options are monthly-expiry only, which bounds this window.
+    min_days_to_expiry: 10
+    max_days_to_expiry: 25
+
+  structure:
+    long_leg_delta_min: 0.50
+    long_leg_delta_max: 0.55
+    short_leg_delta_min: 0.25
+    short_leg_delta_max: 0.30
+
+setup_b:
+  # Three bands, and the middle one is a no-trade. docs/06 calls that "a valid
+  # and frequent output" — it is the most common answer, and the easiest thing
+  # to accidentally break.
+  credit_regime_min_iv_rank: 70.0
+  debit_regime_max_iv_rank: 35.0
+
+  credit:
+    short_leg_delta_min: 0.15
+    short_leg_delta_max: 0.20
+    min_days_to_expiry: 4
+    max_days_to_expiry: 9
+
+  debit:
+    min_days_to_expiry: 10
+    max_days_to_expiry: 20
+
+  # No position is held into expiry day. Expiry-day gamma is how defined-risk
+  # positions stop being defined-risk in practice.
+  flat_by_sessions_before_expiry: 1
+
+  # Only one index position at a time, across both variants.
+  max_concurrent_index_positions: 1
+
+  # Macro events that block entry when they fall inside the window.
+  blocking_event_types:
+    - RBI_POLICY
+    - CPI
+    - IIP
+    - FOMC
+    - UNION_BUDGET
+
+# Naked short options are disabled here and unreachable in code. The flag stays
+# off through v1 and v2 (FR-5.9); it exists so the absence is explicit rather
+# than merely unimplemented.
+allow_naked_shorts: false

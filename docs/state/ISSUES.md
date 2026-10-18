@@ -463,3 +463,69 @@ logged and work continues — no drive-by fixes inside a step.
   from a database that has never been dumped before, restored into a database created
   before the extension exists. Worth ten minutes the next time the schema changes.
 - **Status:** open · **Owner:** me
+
+### ISS-021 — Setup A's delta bands are unsatisfiable on most real NSE chains
+- **Found:** 2026-10-19, step 2.5, running the structure builder against archived chains
+- **Severity:** **high.** Setup A cannot produce a structure for 15 of 25 universe names,
+  so the setup would almost never fire — and would look like a working system doing it
+- **Measured, on 25 real chains captured 2026-10-16 at 11 DTE:**
+  **10 of 25** have a strike in *both* the long band (delta 0.50–0.55) and the short band
+  (0.25–0.30). No structure is buildable for ADANIENT, BHARTIARTL, COALINDIA, HINDUNILVR,
+  INFY, ITC, KOTAKBANK, LT, M&M, NTPC, RELIANCE, SBIN, SUNPHARMA, TATASTEEL or TCS.
+- **Why:** NSE strike spacing is coarse relative to a 0.05-wide delta band. Delta steps
+  straight over the band between adjacent strikes — on the NIFTY weekly it goes 0.73 →
+  **0.55** → 0.41, skipping 0.25–0.30 entirely. Compounding it, only 15–47 of each chain's
+  strikes carry a delta at all; the rest come back null from the feed.
+- **Why it matters now rather than at 2.8:** `docs/10`'s Phase 2 exit says "If the dry run
+  shows the setups almost never fire, fix that now — it's a threshold problem, and
+  discovering it after the agents are built means rebuilding them." The archived chains
+  make the discovery available today, before any agent exists.
+- **Options, none taken yet — this is a rulebook change and so the user's call:**
+  1. **Widen the bands** (0.45–0.60 long, 0.20–0.35 short). Simplest, and changes the
+     risk profile of every structure.
+  2. **Select the nearest strike to a delta target** rather than requiring band
+     membership, with a documented maximum deviation. Keeps intent, always yields a
+     structure where the chain is liquid at all.
+  3. **Select by moneyness** (% from spot) instead of delta, with delta reported.
+  4. Accept a much smaller tradable universe per day.
+- **My recommendation: option 2.** "Closest to 0.525, reject beyond 0.45–0.60" preserves
+  the rulebook's intent and degrades honestly on a coarse chain, rather than silently
+  trading a different structure from the one specified.
+- **Not acted on:** changing a documented rulebook threshold is a decision, not a fix.
+  `verify 2_5` fails on it so it stays visible.
+- **Status:** open · **Owner:** user
+
+### ISS-022 — Flat 0.25% risk implies a much larger account than expected
+- **Found:** 2026-10-19, step 2.7, by writing a sizing fixture that could not trade
+- **Severity:** not a defect — a fact about the rulebook that the capital figure in
+  `docs/07` has to reckon with
+- **The arithmetic:** a NIFTY debit spread with a ₹140 max loss per unit and a 75 lot
+  risks **₹10,500 per lot**. At flat 0.25% risk per trade (FR-6.3), one lot needs
+  **₹42,00,000** of equity. At ₹10,00,000 the budget is ₹2,500 and the correct answer is
+  **zero lots** — which the sizing returns, with a reason, rather than rounding up.
+- **Why it is easy to miss:** the gate behaves perfectly. It refuses, states why, and
+  never breaches. Nothing looks broken; the briefing simply never produces a tradable
+  size, and the cause is capital rather than code.
+- **Options:** raise the risk fraction (changes the whole risk model and needs a DEVLOG
+  entry); prefer narrower spreads with a smaller max loss per unit; trade stock options
+  where lot value is lower; or accept that index structures need a larger account.
+- **What I did:** nothing to the rulebook. `verify 2_7` reports the minimum viable
+  capital as a measured line so the number is visible rather than inferred.
+- **Related:** `docs/07` has a blank for the capital figure, and this is the input it
+  needs. Also interacts with ISS-021 — a narrower spread would help both.
+- **Status:** open · **Owner:** user
+
+### ISS-023 — Trading costs are ~13% of a real spread's best case
+- **Found:** 2026-10-19, step 2.8, costing the AXISBANK structure built in 2.5
+- **Severity:** informational now, decisive once the dry run has data
+- **Measured:** a four-order round trip on a ₹7,500-per-leg turnover costs **₹272.30**
+  (brokerage ₹80, STT ₹15, slippage ₹150, the rest statutory) against a **₹2,086.50**
+  max gain per lot. **Costs consume 13% of the best possible outcome**, and far more of a
+  typical one, since the exit target is 60% of spread width rather than the maximum.
+- **The largest single component is slippage at ₹150**, which is an *assumption*
+  (0.5% of premium per leg) and not a measured number. It cannot be measured until there
+  are real fills, so the figure above is a guess that happens to dominate the total.
+- **Why it matters:** docs/10 wants hypothetical P&L "after full costs". A 13% haircut on
+  the best case means marginal setups are losers after costs, and the dry run will show
+  that once it has history to run over.
+- **Status:** open, informational · **Owner:** me (remeasure slippage once fills exist)

@@ -15,12 +15,23 @@ from __future__ import annotations
 from collections.abc import Sequence
 from decimal import ROUND_HALF_UP, Decimal
 
+from trading_desk.domain.enums import TrendRegime
 from trading_desk.domain.market import Bar
 from trading_desk.domain.values import Money, Price
 
 # Wilder's original period. Every published ATR table assumes it, so a different
 # default would silently disagree with every external cross-check.
 DEFAULT_ATR_PERIOD = 14
+
+# Twenty sessions is about a calendar month of trading, the usual reference for
+# "is today's volume unusual".
+DEFAULT_VOLUME_PERIOD = 20
+
+# 20 and 50 sessions: roughly a month against a quarter. Conventional on
+# purpose - an unusual pair would need a backtest to justify, and there is not
+# one yet (step 2.8).
+DEFAULT_FAST_MA = 20
+DEFAULT_SLOW_MA = 50
 
 
 def _gap(first: Price, second: Price) -> Money:
@@ -109,3 +120,74 @@ def percent_change(earlier: Price, later: Price) -> float:
     if earlier.paise == 0:
         raise ValueError("cannot compute a percentage change from a zero price")
     return (later.paise - earlier.paise) / earlier.paise * 100
+
+
+def simple_moving_average(bars: Sequence[Bar], period: int) -> Money | None:
+    """Mean close over the last `period` bars, or None if there are too few.
+
+    None rather than a mean of whatever is available: a "20-day average" over
+    six days is a different number that a gate would act on without knowing.
+    """
+    if period <= 0:
+        raise ValueError(f"period must be positive, got {period}")
+    if len(bars) < period:
+        return None
+
+    total = sum((Decimal(bar.close.paise) for bar in bars[-period:]), Decimal(0))
+    return Money(paise=int((total / period).to_integral_value(ROUND_HALF_UP)))
+
+
+def volume_ratio(bars: Sequence[Bar], period: int = DEFAULT_VOLUME_PERIOD) -> float | None:
+    """Latest bar's volume against the average of the `period` bars before it.
+
+    The window deliberately **excludes** the latest bar. Including it damps the
+    very spike the ratio exists to detect: on a 20-day window a 10x day reads
+    as 6.9x instead of 10x, which is the difference between tripping a
+    threshold and not.
+
+    Returns None when the baseline is zero - a ratio against no volume is not
+    "infinitely unusual", it is unmeasurable, and a gate must be told that
+    rather than handed an infinity.
+    """
+    if period <= 0:
+        raise ValueError(f"period must be positive, got {period}")
+    if len(bars) < period + 1:
+        return None
+
+    baseline = bars[-(period + 1) : -1]
+    total = sum(bar.volume for bar in baseline)
+    if total <= 0:
+        return None
+
+    average = Decimal(total) / period
+    return float(Decimal(bars[-1].volume) / average)
+
+
+def trend_regime(
+    bars: Sequence[Bar],
+    fast_period: int = DEFAULT_FAST_MA,
+    slow_period: int = DEFAULT_SLOW_MA,
+) -> TrendRegime:
+    """Classify the price structure from two moving averages.
+
+    The rule is deliberately the boring one: price above a rising stack is an
+    uptrend, below a falling stack is a downtrend, anything else is ranging.
+    It will misclassify at turns. That is accepted - this feeds a *confirming*
+    gate, not an entry trigger, and a cleverer classifier would be one more
+    thing to be wrong about with no backtest to justify it.
+
+    INSUFFICIENT_HISTORY is a distinct answer from RANGING. Collapsing them
+    would let a newly listed stock read as "no trend" when the truth is "we
+    cannot say".
+    """
+    fast = simple_moving_average(bars, fast_period)
+    slow = simple_moving_average(bars, slow_period)
+    if fast is None or slow is None:
+        return TrendRegime.INSUFFICIENT_HISTORY
+
+    close = bars[-1].close.paise
+    if close > fast.paise > slow.paise:
+        return TrendRegime.UPTREND
+    if close < fast.paise < slow.paise:
+        return TrendRegime.DOWNTREND
+    return TrendRegime.RANGING

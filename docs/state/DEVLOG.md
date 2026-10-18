@@ -1268,3 +1268,285 @@ done when *you* have personally restored once. The automated drill proves the me
 it does not prove that section 4 of `docs/15` reads clearly at the moment it is needed.
 
 `make check` clean: 456 tests, 4 contracts kept.
+
+---
+
+## 2026-10-19 — Steps 2.1 and 2.2: the research vocabulary
+
+Phase 2 begins. Still no AI: the rulebook becomes plain tested functions first, because an
+agent built against an unfinished rulebook gets thrown away.
+
+### Step 2.1 — domain models for research (`verify 2_1` 8/8)
+
+`domain/research.py` (`Evidence`, `Thesis`) and `domain/proposals.py` (`EntryCondition`,
+`StopBasis`, `TargetBasis`, `ProposedLeg`, `TradeProposal`, `RejectedCandidate`,
+`ResearchCycleResult`).
+
+**Plan deviation, recorded per rule 10.** `docs/10` names the deliverable
+`domain/models/*.py`. Built as two flat modules instead, because every other domain module
+is flat and concept-named (`market.py`, `news.py`, `vol.py`), a `models/` subpackage would
+be the only nested one, and "models" inside `domain/` is a redundant word. Same content,
+different path.
+
+**The introspection test is the point of the step.** It walks every dataclass reachable
+from `TradeProposal` through its field annotations and fails on any field name matching a
+size or order term. Induced both ways:
+
+| Induced | Reported |
+|---|---|
+| `TradeProposal.quantity` | `Offending fields: ["TradeProposal.quantity (matched 'quantity')"]` |
+| `ProposedLeg.lot_size` (nested, one level down) | `["ProposedLeg.lot_size (matched 'size')", "... (matched 'lot')"]` |
+
+The nested case is the one that matters — that is where a size would actually be added,
+and checking `TradeProposal` alone would have missed it. A further check inside the test
+asserts the ban list catches a synthetic order-like model, so a typo in the list cannot
+make the whole thing vacuous.
+
+**Design decisions worth stating:**
+
+- **`price` is a banned substring, so fields are named `trigger_level` and `level`.** A
+  *level* describes an idea; an order *price* instructs. Both a strike and a stop level are
+  legitimate research output and the briefing is unreadable without them — so the naming
+  keeps them unambiguously on the research side rather than carving exceptions into the
+  ban list.
+- **`ProposedLeg` has no ratio field.** v1 trades 1:1 verticals and single legs, so a ratio
+  buys nothing today and would be the obvious place for a lot count to arrive later wearing
+  a different hat.
+- **Independence is counted by distinct source, not by evidence item.** Two quotes from one
+  publisher are one source, compared case-insensitively. A naive count of evidence items
+  would let a single-source thesis through, which is exactly what FR-4.6 forbids. The
+  limit is stated in the docstring: five outlets carrying one wire story are also not
+  independent, and this type cannot see that — `event_key` grouping upstream handles it.
+- **`rank: Literal[1, 2]` is checked at runtime as well.** mypy only sees call sites it can
+  type, and an LLM-built proposal arrives as data.
+- **A cycle with no proposals must state a reason.** An empty list with no reason is
+  indistinguishable from a crashed cycle.
+- **Contradicting evidence is kept, not dropped**, and exposed via `Thesis.contradicting()`.
+
+### Step 2.2 — indicator and signal library (`verify 2_2` 8/8)
+
+Much of this already existed: ATR(14) Wilder-smoothed, 20-day range and realised volatility
+landed in 1.3a, 1.4 and 1.8. Added `simple_moving_average`, `volume_ratio`, `trend_regime`,
+and `domain/signals/registry.py`.
+
+**The volume window deliberately excludes the latest bar**, and it has a dedicated check
+because the alternative is quietly wrong: including today damps the very spike the ratio
+exists to detect. A 10,000-share day against four 1,000-share days reads **10.0x** excluded
+and **3.57x** included — the difference between tripping a threshold and not.
+
+**`INSUFFICIENT_HISTORY` is a distinct regime from `RANGING`.** "We cannot say" and "no
+trend" are different answers, and collapsing them makes a newly listed stock look like a
+quiet one.
+
+**The signal registry has two levels, and nothing is usable yet.** `require_registered`
+refuses an invented name — which is what an LLM actually does, confidently naming "the
+9-day momentum crossover" with a paragraph attached. `require_usable` additionally requires
+`BACKTESTED`, and **raises for all six entries**, because step 2.8 has not run and nothing
+has out-of-sample evidence. That is the honest state and the intended order of work: wiring
+an agent to this before 2.8 fails loudly. A check fails if any entry claims a backtest
+early, since flipping a status flag is easy and silent.
+
+### A fabricated number caught in my own verify output
+
+The real-bars check printed `volume ratio 1.0`. It was meaningless: `daily_closes` returns
+closes only, so the bars carried a synthetic flat volume and the ratio was 1.0 by
+construction — printed in the same line as genuinely measured values. Removed, with a
+comment saying why. Presenting a fabricated number as a measurement is the same failure
+mode as ISS-018, just in the output rather than the assertion.
+
+`make check` clean: 494 tests, 4 contracts kept.
+
+---
+
+## 2026-10-19 — Steps 2.3, 2.4, 2.5: the rulebooks as code
+
+`domain/gates.py`, `config/setups.yaml`, `domain/setups/{thresholds,setup_a,setup_b}.py`,
+`domain/options/structure.py`, and three verify scripts. Still no AI, by design: the
+rulebook is plain tested functions first.
+
+### 2.3 — Setup A, nine gates (`verify 2_3` 7 of 8)
+
+Each gate returns a `GateResult` carrying what it measured and the threshold it was
+compared against (rule 9), and the combinator **does not short-circuit** — so a briefing
+can show that an idea missed one gate narrowly rather than six badly.
+
+`NO_DATA` is deliberately distinct from `FAIL`. "IV rank 72, needed under 60" is a
+judgement; "no IV rank available" is a gap. Collapsing them hides the gap, and the gap is
+what gets fixed. Today that matters more than it sounds — IV rank is unavailable for most
+of the universe, so most candidates stop before any judgement is made, and say so.
+
+Boundary tests sit on both sides of every numeric threshold, since the rules are
+asymmetric and easy to tidy wrongly: credibility **>= 0.7** (0.70 passes), move
+**< 1.5× ATR** (exactly 1.5 fails), IV rank **< 60** (exactly 60 fails), expiry window
+**inclusive** at 10 and 25.
+
+The one failure is `thresholds_are_signed_off`: `config/setups.yaml` carries
+`verified: false`, same as the liquidity thresholds in 1.2. The numbers come from docs/06
+and are a considered starting point, not a backtested one.
+
+### 2.4 — Setup B (`verify 2_4` 8/8)
+
+The middle band gets its own checks rather than being the fall-through case, because
+docs/06 calls it "a valid and frequent output" and a refactor that turns no-trade into a
+trade is silent and expensive. Checked across 35.1 / 40 / 50 / 60 / 69.9, plus the case
+that would quietly widen B2: **a trending index at IV rank 50 is still no-trade** — trend
+unlocks the low band only.
+
+The bands deliberately do not tile the number line: `>= 70` and `<= 35` means **35 and 70
+themselves trade** while 35.1 and 69.9 do not. Preserved exactly, with a check on each
+edge.
+
+`UNKNOWN` is separate from `NO_TRADE`: "we have no IV rank" gets fixed by waiting for
+history, "sit out" does not.
+
+### 2.5 — Structure builder (`verify 2_5` 6 of 7)
+
+**FR-5.9 is a control-flow property here, not a flag.** There are two builders, both
+return exactly two legs, and the credit builder raises `StructureError` when no protective
+wing exists rather than returning a bare short. The config flag is a second lock on a door
+with no handle.
+
+**A real bug found by a failing fixture:** `_nearest_priced_strike` picked the wing by
+distance alone, so it could select a strike *between* the short leg and the money. That
+inverts the spread — it prices as a debit and its "max loss" is nonsense. The wing is now
+constrained to the protective side, below the short for puts and above it for calls.
+
+Built from a real archived chain: **AXISBANK 1290/1330, max loss ₹12.18 + max gain ₹27.82
+= width ₹40.** The identity holding on live data is the check worth having.
+
+### The finding that matters most — ISS-021
+
+The real-chain check failed first time, and the reason is a rulebook problem rather than a
+code one.
+
+**Setup A's delta bands are unsatisfiable on 15 of 25 real chains.** Measured on the
+2026-10-16 captures at 11 DTE: only 10 of 25 names have a strike in both the 0.50–0.55 and
+0.25–0.30 bands. NSE strike spacing is coarse relative to a 0.05-wide band — on the NIFTY
+weekly, delta goes 0.73 → 0.55 → 0.41, stepping straight over 0.25–0.30 — and only 15–47
+of each chain's strikes carry a delta at all.
+
+docs/10's Phase 2 exit says to fix a "setups almost never fire" problem *now*, before the
+agents exist. The archived chains made that discoverable today. Four options and a
+recommendation are in ISS-021; **I have not changed the rulebook**, because changing a
+documented threshold is the user's decision, and `verify 2_5` fails on it so it stays
+visible.
+
+A smaller related note: the NIFTY capture is a 3-DTE weekly, which Setup A's 10–25 DTE
+window would reject anyway. The real-chain check now picks the first chain that is both
+in-window and buildable, rather than failing against an expiry the rulebook never offers.
+
+`make check` clean: 583 tests, 4 contracts kept.
+
+---
+
+## 2026-10-19 — Steps 2.6, 2.7, 2.8: greeks, the risk gate, and costs
+
+### 2.6 — Greeks (`verify 2_6` 7/7)
+
+`domain/options/greeks.py`: Black-76 pricing, the four greeks, and a bisection implied-vol
+solver. **Pure Python maths, no scipy in `domain/`** — `vollib` is a *dev* dependency used
+in the tests as the reference, so our numbers are asserted against an independent
+implementation rather than against themselves. They agree to **1.78e-15**.
+
+Two deliberate choices:
+
+- **Bisection, not Newton-Raphson.** Vega collapses deep in or out of the money, which is
+  exactly where Newton overshoots into a negative volatility and returns something
+  confident and wrong. The extra iterations cost nothing at a few hundred strikes a day.
+- **Put-call parity is tested as an identity.** Comparing only calls against one library
+  would miss a sign error that parity catches immediately.
+
+**The cross-check against Dhan passed on real archived data**: 10 near-the-money legs at
+11 DTE, mean delta gap **0.0150**, worst **0.0338**. That is close agreement given we know
+neither their model nor their risk-free rate, dividend assumption or day count. Divergence
+is reported, never averaged — `verify 2_6` greps the module to confirm no blending helper
+exists, because "split the difference" produces a number neither model would defend.
+
+### 2.7 — The risk gate (`verify 2_7` 9/9)
+
+Thirteen checks per `docs/01` §4, the most boring code in the repo, read under pressure.
+
+**Two requirements enforced by shape rather than by discipline:**
+
+- `position_size` has **no confidence parameter** (FR-6.3, FR-7.8). Confidence-based
+  sizing is blocked until calibration beats baseline over 50 resolved ideas, so the
+  parameter must not exist to be passed. A test introspects the signature.
+- `RiskInputs` carries **no thesis, rationale or confidence field** (FR-6.7). The gate
+  cannot be argued with because it is never handed an argument.
+
+Sizing rounds **down**, always, and a property test asserts the inverse: for any equity,
+max loss and lot size, *one more lot would always breach*. Rounding up through a lot
+boundary is the one error this module must never make, and `hypothesis` runs 500 examples
+at it.
+
+All four FR-9.4 fail-closed conditions veto: stale tick, disconnected feed, unknown data
+age, and an exception inside a check. The last is caught broadly on purpose — an error
+escaping a risk check to a caller that reads "no exception" as "fine" is how a veto
+becomes an approval.
+
+### 2.8 — Costs and the dry run (`verify 2_8` 8 of 9)
+
+`domain/costs.py` itemises every line a contract note shows, so it can be matched line by
+line rather than as a total. Three things it gets right that are easy to get wrong:
+
+- **STT on the sell side only.** The single biggest asymmetry between a debit and a credit
+  structure.
+- **GST on brokerage plus the exchange charge only**, never on statutory taxes.
+- **A round trip is four orders**, not two. Charging per structure halves the brokerage
+  and flatters the strategy.
+
+`application/dry_run.py` carries the point-in-time guard. `PointInTimeView` filters on
+read, so a lookahead is not expressible rather than merely discouraged, and the guard is
+**induced** — injected future bars raise `LookaheadError`.
+
+The first real dry run over 26 archived chains: **0 of 26 would have fired**, top blockers
+`catalyst_recency`, `catalyst_type` and `credibility`, each ×26. That is the correct
+answer — no catalyst pipeline has run over history, so those inputs are absent and
+correctly return NO_DATA rather than an assumed pass. It measures the plumbing, which is
+all a three-day archive can measure.
+
+### Two findings for the user
+
+**ISS-022 — flat 0.25% risk needs a much larger account than it looks.** A NIFTY spread
+risking ₹140/unit on a 75 lot is ₹10,500 per lot, so one lot needs **₹42 lakh** of equity.
+At ₹10 lakh the answer is **zero lots**. The gate behaves perfectly — refuses, states why,
+never breaches — so nothing looks broken; the briefing just never produces a tradable
+size. `docs/07`'s blank capital figure is the input this needs.
+
+**ISS-023 — costs are 13% of a real spread's best case.** ₹272.30 round trip against the
+AXISBANK structure's ₹2,086.50 max gain per lot. The largest component is **slippage at
+₹150, which is an assumption, not a measurement** — and it dominates the total.
+
+### Another fabricated number caught in my own output
+
+`verify 2_8` printed `volume ratio 1.00` from bars built out of real closes but synthetic
+flat volumes — 1.00 by construction, beside genuinely measured values. Same mistake as in
+`verify 2_2` earlier today, same fix. Worth noting that I made it twice in one session:
+the pattern is building a test fixture from partial real data and then reporting a field
+the fixture never populated.
+
+`make check` clean: 673 tests, 4 contracts kept.
+
+## 2026-10-19 (end of session) — STATE.md corrected, no code change
+
+Re-ran everything to confirm Phase 2 really was finished. `make check` green (673 tests,
+4 contracts, mypy clean) and the Phase 2 sweep reproduced exactly: 2.1, 2.2, 2.4, 2.6 and
+2.7 pass; 2.3, 2.5 and 2.8 fail on the three decisions waiting on Ajay, not on defects.
+
+The one thing genuinely unfinished was `STATE.md` itself. It had been updated at the
+bottom — new sweep rows, new blocked items — but not at the top, so the header still read
+*"Phase: 1 — The data spine (next)"*, the Done list stopped at step 1.1b, and "Next
+action" described step 1.3b, which was finished days ago. A session reading only the first
+forty lines, which is exactly what CLAUDE.md §5 tells it to do, would have restarted work
+that was already done.
+
+Rewritten in place: Done collapsed to one line per phase, the stale next-action replaced
+with Phase 3 step 3.1, and the "Blocked on you" list renumbered in priority order — it had
+drifted to `1, 2, 2c, 2e, 2d, 2f, 2h, 2i, 2j, 2l, 2m, 2k, 2g, 2b, 3, 4, 5`, which is what
+happens when a list is only ever appended to. 168 lines down to 139; CLAUDE.md asks for
+~40, so it is still too long and the Done section is the next thing to cut.
+
+Two facts corrected while rewriting rather than copied forward: the 0.6 row said "10
+ports, 10 fakes" when `verify 0_6` reports **15** (checked, not assumed), and the token
+noted as valid until ~16:36 on the 19th has now expired, so `make login` is needed before
+any live call.

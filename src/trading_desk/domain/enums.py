@@ -57,6 +57,20 @@ class SourceTier(StrEnum):
     UNVERIFIED = "UNVERIFIED"
 
 
+class TrendRegime(StrEnum):
+    """What the price structure is doing. Input to Setup A's technical confirm.
+
+    RANGING is the common case and is not a failure to classify - it is the
+    honest answer most of the time, and a classifier that rarely says it is
+    overfitting to noise.
+    """
+
+    UPTREND = "UPTREND"
+    DOWNTREND = "DOWNTREND"
+    RANGING = "RANGING"
+    INSUFFICIENT_HISTORY = "INSUFFICIENT_HISTORY"
+
+
 class SetupId(StrEnum):
     """The two v1 setups. A third needs 100 resolved ideas first - see docs/05."""
 

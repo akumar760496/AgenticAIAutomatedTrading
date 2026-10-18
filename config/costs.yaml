@@ -1,0 +1,33 @@
+# Trade cost rates. CLAUDE.md rule 7: statutory and broker numbers are config.
+#
+# verified: false — these are the published schedules as of October 2026, not
+# numbers reconciled against a contract note. Statutory rates change by
+# circular and brokerage varies by plan, so FR-10.3 requires reconciliation
+# against a real Dhan contract note before any backtest result is trusted.
+# `verify 2_8` fails on this flag until then.
+verified: false
+effective_from: 2026-10-19
+source: "published schedules, October 2026 - NOT reconciled against a contract note"
+
+# Flat per executed order. Dhan's published options rate.
+brokerage_per_order_rupees: 20
+
+# Securities Transaction Tax, on the SELL side only, on premium turnover.
+stt_sell_fraction: 0.001
+
+# NSE transaction charge on premium turnover.
+exchange_txn_fraction: 0.00035
+
+# SEBI turnover fee.
+sebi_fraction: 0.000001
+
+# Stamp duty, BUY side only.
+stamp_duty_buy_fraction: 0.00003
+
+# GST on brokerage + exchange transaction charge only, never on statutory tax.
+gst_fraction: 0.18
+
+# Not a statutory cost, but a real one. Half a percent of premium per leg is a
+# starting assumption for liquid near-the-money options; it needs measuring
+# against real fills, which cannot happen until there are real fills.
+slippage_fraction: 0.005

@@ -110,7 +110,7 @@ files = ["src", "tests", "scripts"]
 
 [[tool.mypy.overrides]]
 # Third-party packages without type stubs. Added only when a real import needs it.
-module = ["apscheduler.*"]
+module = ["apscheduler.*", "vollib.*"]
 ignore_missing_imports = true
 
 # ---------------------------------------------------------------------------
@@ -130,3 +130,8 @@ branch = true
 [tool.coverage.report]
 # domain/ is the code that decides things. It gets held to a higher bar than adapters.
 exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:"]
+
+[dependency-groups]
+dev = [
+    "py-vollib>=1.0.12",
+]
