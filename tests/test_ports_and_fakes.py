@@ -24,7 +24,7 @@ from tests.fakes import (
     FakeNotifier,
     FakeOptionChain,
 )
-from trading_desk.domain.enums import Exchange, Segment, SourceTier
+from trading_desk.domain.enums import Direction, Exchange, Segment, SourceTier
 from trading_desk.domain.instruments import InstrumentRef
 from trading_desk.domain.market import Bar, Quote
 from trading_desk.domain.news import NewsArticle
@@ -139,6 +139,7 @@ class TestJournalIsAppendOnly:
             cycle_id=uuid4(),
             symbol="RELIANCE",
             setup_id="SETUP_A",
+            direction=Direction.BULLISH,
             rank=1,
             confidence=0.7,
             gate_values={"iv_rank": "42"},
@@ -168,6 +169,34 @@ class TestJournalIsAppendOnly:
         awaiting = journal.ideas_awaiting_decision(NOW)
 
         assert [idea.idea_id for idea in awaiting] == [second.idea_id]
+
+    def test_a_second_decision_is_a_correction_not_an_error(self) -> None:
+        """Changing your mind is expected, and the history of changing it is
+        itself evidence. The latest row wins; neither is overwritten."""
+        journal = FakeJournal()
+        idea = self._idea()
+        journal.record_idea(idea)
+
+        journal.record_decision(
+            RecordedDecision(
+                idea_id=idea.idea_id, action="SKIPPED", reason="spread too wide", decided_at=NOW
+            )
+        )
+        journal.record_decision(
+            RecordedDecision(
+                idea_id=idea.idea_id, action="TOOK", reason="spread tightened", decided_at=NOW
+            )
+        )
+
+        latest = journal.latest_decision(idea.idea_id)
+        assert latest is not None
+        assert latest.action == "TOOK"
+        assert len(journal.decisions) == 2  # both rows kept
+
+    def test_a_decision_without_a_reason_is_refused(self) -> None:
+        """docs/06 calls the reason the most valuable field in the schema."""
+        with pytest.raises(ValueError, match="reason"):
+            RecordedDecision(idea_id=uuid4(), action="SKIPPED", reason="   ", decided_at=NOW)
 
 
 class TestFakeDataFiltering:

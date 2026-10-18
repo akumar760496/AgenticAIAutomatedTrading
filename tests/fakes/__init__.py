@@ -9,6 +9,7 @@ because the error paths matter as much as the happy ones - fail-closed behaviour
 is only real if it is tested.
 """
 
+from tests.fakes.backup import FakeBackupTool
 from tests.fakes.bar_store import FakeBarStore
 from tests.fakes.broker import FakeBrokerRead
 from tests.fakes.chain_archive import FakeChainArchive
@@ -24,6 +25,7 @@ from tests.fakes.notifier import FakeNotifier
 from tests.fakes.option_chain import FakeOptionChain
 
 __all__ = [
+    "FakeBackupTool",
     "FakeBarStore",
     "FakeBrokerRead",
     "FakeChainArchive",

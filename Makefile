@@ -1,5 +1,5 @@
 # Development commands. Every target assumes `make install` has been run once.
-.PHONY: help install check lint format types imports test test-cov verify verify-phase hooks clean db-up db-down db-migrate db-reset db-shell run snapshot login
+.PHONY: help install check lint format types imports test test-cov verify verify-phase hooks clean db-up db-down db-migrate db-reset db-shell backup restore-drill run snapshot login
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -63,6 +63,12 @@ db-reset:  ## Destroy the database and rebuild it from migrations (DELETES DATA)
 	docker compose down -v
 	docker compose up -d --wait
 	uv run alembic upgrade head
+
+backup:  ## Take a database dump plus a chain-archive digest
+	uv run python -m scripts.backup
+
+restore-drill:  ## Restore the newest backup into a scratch DB and compare
+	uv run python -m scripts.backup --drill
 
 db-shell:  ## Open psql against the dev database
 	docker compose exec postgres psql -U trading_desk -d trading_desk

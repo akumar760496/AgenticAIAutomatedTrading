@@ -13,12 +13,14 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import date
+from decimal import Decimal
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 from trading_desk.domain.market import Bar
 from trading_desk.domain.timezones import to_ist
+from trading_desk.domain.values import PAISE_PER_RUPEE
 from trading_desk.infra.db import session_scope
 
 INSERT_BAR = text(
@@ -71,6 +73,23 @@ class PostgresBarStore:
     def count_daily_bars(self, symbol: str) -> int:
         with session_scope(self._factory) as session:
             return _count(session, symbol)
+
+    def daily_closes(self, symbol: str) -> list[tuple[date, Decimal]]:
+        """Closing prices oldest first, for the realised-vol proxy (FR-5.6).
+
+        Paise are converted to Decimal rupees here rather than float: the log
+        returns downstream are float maths by nature, but the price must not
+        have been a float on the way in (CLAUDE.md rule 4).
+        """
+        with session_scope(self._factory) as session:
+            rows = session.execute(
+                text(
+                    "SELECT bar_start, close_paise FROM bars_1d "
+                    "WHERE instrument_symbol = :symbol ORDER BY bar_start"
+                ),
+                {"symbol": symbol},
+            ).all()
+        return [(to_ist(row[0]).date(), Decimal(row[1]) / PAISE_PER_RUPEE) for row in rows]
 
     def daily_bar_dates(self, symbol: str) -> list[date]:
         with session_scope(self._factory) as session:

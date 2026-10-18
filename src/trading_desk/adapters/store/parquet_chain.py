@@ -17,12 +17,14 @@ because they are model outputs with no exact decimal value.
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import polars as pl
 
 from trading_desk.adapters.clock import to_ist
 from trading_desk.domain.market import OptionChainSnapshot
+from trading_desk.domain.vol import combine_atm_iv
 
 DEFAULT_ARCHIVE_ROOT = Path("data/chains")
 
@@ -77,6 +79,29 @@ class ParquetChainArchive:
             return 0
         return len(list(directory.glob("snapshot_*.parquet")))
 
+    def atm_iv_series(self, underlying: str) -> list[tuple[date, float]]:
+        """One ATM IV reading per trading day, oldest first.
+
+        **The last snapshot of the day wins**, not the mean of the day's three.
+        It is the reading closest to the close, which is what a daily close
+        price is, and mixing a 09:30 and a 15:15 reading into one number would
+        make the series depend on how many captures happened to succeed.
+        """
+        series = []
+        for day_dir in sorted(self._root.glob("date=*")):
+            directory = day_dir / f"underlying={underlying}"
+            if not directory.is_dir():
+                continue
+            files = sorted(directory.glob("snapshot_*.parquet"))
+            if not files:
+                continue
+
+            value = _atm_iv_for_file(files[-1])
+            if value is None:
+                continue  # an unreadable day is a gap, never an interpolation
+            series.append((date.fromisoformat(day_dir.name.removeprefix("date=")), value))
+        return series
+
     def _path_for(self, snapshot: OptionChainSnapshot) -> Path:
         # Partitioned by IST, because a trading day is an IST concept. Using UTC
         # would be correct during market hours and confusing everywhere else:
@@ -120,3 +145,29 @@ class ParquetChainArchive:
                     }
                 )
         return rows
+
+
+def _atm_iv_for_file(path: Path) -> float | None:
+    """ATM implied volatility from one snapshot file.
+
+    The strike nearest spot, then the call/put rule from `domain.vol`. Reading
+    the file rather than rebuilding an OptionChainSnapshot keeps this cheap:
+    the IV-rank backfill touches hundreds of files.
+    """
+    frame = pl.read_parquet(path)
+    if frame.is_empty():
+        return None
+
+    spot = frame["spot_paise"][0]
+    nearest = frame.with_columns((pl.col("strike_paise") - spot).abs().alias("_gap"))
+    atm_strike = nearest.sort("_gap")["strike_paise"][0]
+    at_the_money = frame.filter(pl.col("strike_paise") == atm_strike)
+
+    def side(right: str) -> float | None:
+        rows = at_the_money.filter(pl.col("right") == right)
+        if rows.is_empty():
+            return None
+        value = rows["implied_volatility"][0]
+        return None if value is None else float(value)
+
+    return combine_atm_iv(side("CALL"), side("PUT"))

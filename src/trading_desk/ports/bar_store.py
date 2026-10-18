@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import date
+from decimal import Decimal
 from typing import Protocol
 
 from trading_desk.domain.market import Bar
@@ -28,6 +29,10 @@ class BarStorePort(Protocol):
         ...
 
     def count_daily_bars(self, symbol: str) -> int: ...
+
+    def daily_closes(self, symbol: str) -> list[tuple[date, Decimal]]:
+        """Closing prices oldest first, in rupees. Feeds the realised-vol proxy."""
+        ...
 
     def daily_bar_dates(self, symbol: str) -> list[date]:
         """Trading dates held for this symbol, oldest first."""

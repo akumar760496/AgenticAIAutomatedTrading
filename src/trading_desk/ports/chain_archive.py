@@ -7,6 +7,7 @@ without a filesystem.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Protocol
 
 from trading_desk.domain.market import OptionChainSnapshot
@@ -24,4 +25,13 @@ class ChainArchivePort(Protocol):
 
     def snapshot_count(self, on_date: str, underlying: str) -> int:
         """How many snapshots exist for a day. Used by the completeness check."""
+        ...
+
+    def atm_iv_series(self, underlying: str) -> list[tuple[date, float]]:
+        """One ATM IV reading per trading day, oldest first.
+
+        The series IV rank is computed from. A day whose snapshot cannot be
+        read is absent rather than interpolated - a gap is honest, an invented
+        value is not.
+        """
         ...

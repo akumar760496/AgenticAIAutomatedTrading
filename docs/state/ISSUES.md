@@ -401,3 +401,65 @@ logged and work continues — no drive-by fixes inside a step.
 - **Fix:** both lines count passes, and the FAIL line names the failure count separately:
   `FAIL (6 of 7 passed, 1 failed)`.
 - **Status:** closed · **Owner:** me
+
+### ISS-018 — A verification check reported the right answer for the wrong reason
+- **Found:** 2026-10-18, step 1.7, while inducing the append-only guards
+- **Severity:** the check would have passed forever with no protection in place
+- **Symptom:** `delete_is_refused_by_the_database` caught any `DBAPIError` and reported
+  "DELETE rejected by the database trigger". With the triggers deliberately dropped, the
+  DELETE was *still* refused — by a foreign key from `user_decisions` — and the check
+  still reported the trigger had done it.
+- **Why it hid:** the BEFORE DELETE trigger normally fires first, so in the healthy case
+  the trigger genuinely is the cause. The check only lied once the thing it was testing
+  was absent, which is exactly when a check matters.
+- **This is the stale-check anti-pattern again** (fourth or fifth occurrence): an
+  assertion that records a fact true on the day rather than the property intended.
+- **Fix:** `_rejected_by_trigger()` passes only when the error names the append-only
+  trigger, and otherwise reports the real cause —
+  `DELETE refused, but not by the trigger: ForeignKeyViolation ...`.
+- **Generalisable rule, worth applying to every future guard:** when a check asserts that
+  something is refused, assert **why** it was refused, not merely that it was. "An error
+  happened" and "the error I built this for happened" are different claims.
+- **Status:** closed · **Owner:** me
+
+### ISS-019 — Append-only needed a TRUNCATE trigger, not just UPDATE/DELETE
+- **Found:** 2026-10-18, step 1.7, testing the trigger right after writing it
+- **Severity:** the entire journal was erasable in one statement
+- **Symptom:** the first version of migration 0005 created `BEFORE UPDATE OR DELETE ...
+  FOR EACH ROW` triggers on all five tables. `TRUNCATE briefing_ideas CASCADE` emptied the
+  table cleanly: **TRUNCATE does not fire row-level triggers.**
+- **Fix:** a second trigger per table, `BEFORE TRUNCATE ... FOR EACH STATEMENT`, calling
+  the same function. Ten triggers in total.
+- **Worth remembering for any future append-only table:** row-level triggers are not
+  sufficient to make a Postgres table immutable. TRUNCATE, `DROP TABLE` and a superuser
+  all route around them; TRUNCATE is the one that is cheap to defend against.
+- **Status:** closed · **Owner:** me
+
+### ISS-020 — A TimescaleDB restore failed once and will not reproduce
+- **Found:** 2026-10-18, step 1.9, on the first restore drill ever run
+- **Severity:** unknown, which is the problem
+- **Symptom:** `pg_restore` of a `pg_dump` taken minutes earlier aborted with
+  ```
+  COPY failed for table "metadata":
+  duplicate key value violates unique constraint "metadata_pkey"
+  Key (key)=(exported_uuid) already exists
+  ```
+- **What fixed it:** TimescaleDB's documented restore procedure — `CREATE EXTENSION`,
+  `timescaledb_pre_restore()`, restore, `timescaledb_post_restore()`.
+- **Why it is open rather than closed:** inducing the guard afterwards showed the naive
+  path succeeding against **the same dump that produced the failure**, and against all
+  five dumps taken that day. The failure is real (the error text is verbatim) but not
+  reproducible, so the mechanism is unknown. A plausible story — that `exported_uuid` is
+  written into the source catalogue by `pg_dump` and then re-inserted by the restore —
+  does not survive the fact that the same dump restores cleanly now.
+- **My error, recorded because it is the instructive part:** I wrote "the TimescaleDB
+  dance is mandatory, not optional" and "every backup taken before today would have been
+  worthless" into the adapter docstring, from a single observation. Both claims were
+  unsupported. The induction is the only reason they did not stay in the repo.
+- **Current position:** the pre/post restore calls stay — cheap, documented, harmless, and
+  the one time it mattered it mattered completely. The *claim* that they are required has
+  been removed from the code and from `docs/15`.
+- **What would close this:** a reproduction. Most likely candidate to try is a dump taken
+  from a database that has never been dumped before, restored into a database created
+  before the extension exists. Worth ten minutes the next time the schema changes.
+- **Status:** open · **Owner:** me

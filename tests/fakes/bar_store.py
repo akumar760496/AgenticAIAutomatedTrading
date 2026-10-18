@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import date
+from decimal import Decimal
 
 from trading_desk.domain.market import Bar
 from trading_desk.domain.timezones import to_ist
@@ -37,3 +38,9 @@ class FakeBarStore:
 
     def daily_bar_dates(self, symbol: str) -> list[date]:
         return sorted(day for stored_symbol, day in self.bars if stored_symbol == symbol)
+
+    def daily_closes(self, symbol: str) -> list[tuple[date, Decimal]]:
+        matching = sorted(
+            (day, bar) for (stored, day), bar in self.bars.items() if stored == symbol
+        )
+        return [(day, bar.close.rupees()) for day, bar in matching]

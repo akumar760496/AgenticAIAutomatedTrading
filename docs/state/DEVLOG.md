@@ -1004,3 +1004,267 @@ source. It informs eligibility and risk. It does not replace news.
 *seven passed*. The same slot carried opposite meanings depending on the outcome, and step
 1.2 — six passing, one awaiting sign-off — read as a near-total collapse. Both lines now
 count passes.
+
+---
+
+## 2026-10-18 (late) — Step 1.7: the journal schema
+
+Built now, with nothing to record, because **it cannot be backfilled.** "Was the system's
+confidence honest?" can only be answered from rows written at the time the call was made.
+Five tables per `docs/01` §8 and `docs/06` §4: `briefing_ideas`, `user_decisions`,
+`outcomes`, `override_log`, `calibration_snapshots`. Migration 0005.
+
+### Append-only is enforced by the database, not by the adapter
+
+A trigger rejects UPDATE and DELETE on all five tables. An adapter that promises not to
+overwrite is a promise; a trigger is evidence, and it survives a future adapter written by
+someone who has not read this file.
+
+**TRUNCATE needed its own trigger, and that was found by trying it.** TRUNCATE does not
+fire row-level triggers — the first version of the migration left the journal wipeable in
+one statement, and a `TRUNCATE briefing_ideas CASCADE` emptied it cleanly while the row
+trigger sat there looking protective. A `BEFORE TRUNCATE ... FOR EACH STATEMENT` trigger
+closes it. Ten triggers total, two per table.
+
+### A correction is a new row, which changed the port contract
+
+`docs/10` task 3 says "corrections are new rows, never updates", but the port written in
+step 0.6 raised on a second decision for the same idea. Those cannot both hold. The build
+plan wins: `user_decisions` and `outcomes` have a surrogate key and deliberately **no**
+unique constraint on `idea_id`, reads take the newest row by `recorded_at`, and nothing is
+ever edited. Rule 10 — the contract change is recorded here.
+
+The reason this matters rather than being bookkeeping: "I skipped it, then took it an hour
+later" is a fact about the user's process. An overwritten row destroys it, and that is
+precisely the signal `override_log` exists to capture.
+
+mypy caught `FakeJournal` drifting from the changed port immediately, which is the fakes
+earning their keep.
+
+### Other decisions worth stating
+
+- **`decided_at` and `recorded_at` are separate columns.** A decision typed in three days
+  late is weaker evidence than one typed at 15:45 on the day, and only the gap shows it.
+- **`reason` is NOT NULL with `length(btrim(reason)) > 0`.** `docs/06` calls it the most
+  valuable field in the schema; a nullable column collects nulls.
+- **`gate_values` is JSONB holding every gate's measured value, not its verdict.** Storing
+  PASS/FAIL discards the number, and the number is what answers "which gate was actually
+  predictive?" a year from now (rule 9).
+- **`used_iv_proxy` is a column, not a note.** Without it, months of proxy-based ideas are
+  indistinguishable from real ones in the calibration maths once step 1.8 lands.
+- **`size` and `entry_fill` are recorded after the fact**, for outcome scoring only. An
+  LLM never sizes a position (rule 1); nothing reads these to drive anything.
+- Money is BIGINT paise throughout (rule 4).
+
+### Parquet export
+
+`application/journal_export.py` writes each table to `data/journal_exports/<timestamp>/`.
+Analysis never touches the live database: a GROUP BY that locks the DB the scheduler
+depends on is a missed briefing, and a snapshot you keep answers the question you asked
+then rather than silently re-answering it against today's rows.
+
+### Verified — `verify 1_7` 8/8
+
+Full round trip stored and read back identically: idea → decision (TOOK, fill ₹1,412.35) →
+outcome (TARGET, hypothetical ₹4,120.50) → override → calibration snapshot, plus five
+Parquet files with matching row counts.
+
+Guards induced by dropping the triggers and the CHECK, then restoring via migration:
+
+| Induced | Check reported |
+|---|---|
+| Drop the UPDATE/DELETE trigger | `UPDATE SUCCEEDED - the journal can be rewritten` |
+| Drop the TRUNCATE trigger | `TRUNCATE SUCCEEDED - the whole journal can be wiped in one statement` |
+| Drop the reason CHECK | `a decision with no reason was accepted` |
+
+### A check that lied, caught by inducing it
+
+With the triggers dropped, `delete_is_refused` still reported **"DELETE rejected by the
+database trigger"**. It was refused — by a foreign key from `user_decisions`, because the
+BEFORE DELETE trigger normally fires first and hides it. The check returned the right
+boolean for the wrong reason, and had the trigger silently failed to be created, it would
+have gone on passing with no append-only protection at all.
+
+This is the stale-check anti-pattern again, fourth or fifth time now: **an assertion that
+records a fact true on the day rather than the property intended.** Fixed with a helper
+that passes only when the error actually names the append-only trigger, and otherwise
+reports the real cause: `DELETE refused, but not by the trigger: ForeignKeyViolation ...`.
+
+It is worth noting the only reason this surfaced: inducing the guard. The check passed
+cleanly in the normal run and would have stayed green forever.
+
+### State
+
+`make check` clean: 404 tests, 4 contracts kept. Full sweep green except 1.2, which fails
+by design on the user's threshold sign-off.
+
+---
+
+## 2026-10-18 (late) — Step 1.8: IV rank
+
+`domain/vol.py` (pure maths), `application/iv_rank.py`, `verify 1_8`. 1.3b was skipped
+again because it needs a live session and this is Sunday.
+
+### The naming trap, stated before anything else
+
+**"IV rank" and "IV percentile" are different numbers**, and the thresholds in `docs/06`
+(60 / 70 / 35) mean different things under each:
+
+- *IV rank*, as most retail platforms use it: `(current - min) / (max - min)`. One outlier
+  high in the window suppresses every later reading.
+- *IV percentile*: the share of observations below the current one.
+
+`docs/10` step 1.8 says "percentile of today's ATM IV within the trailing window", so
+percentile is what was built. `IvRank.method` records which, so a later change cannot
+silently re-scale every historical gate decision. **The thresholds still need confirming
+against this definition before Setup A gates on them.**
+
+### Today's history is one day, so the proxy is the live path
+
+The chain archive began 2026-10-16 and `MIN_SAMPLES` is 30 trading days. No instrument has
+real IV history and none will for roughly six months (FR-5.6). That makes the refusal path
+the one that actually runs, which is the right thing to be testing now.
+
+Fallback order, never silently skipping: real ATM IV → realised-vol percentile tagged
+`PROXY` → **no number at all**, with the reason recorded. `value=None` is a correct answer,
+not an error, so a briefing can print "IV rank unavailable: 11 samples" rather than acting
+on noise.
+
+### Two design decisions found by testing, not by thinking
+
+1. **Today is excluded from its own history.** The first version ranked `values[-1]`
+   against `values`, so with a 30-day window a new all-time high scored
+   `(29 + 0.5) / 30 = 98.3`. Calling a reading never seen before "the 98.3rd percentile" is
+   simply wrong. `history` is now prior observations only, and a new high reads 100.
+   Caught by a test I had written expecting 100 — the test was wrong about the code and
+   right about the intent.
+2. **Ties count as half.** Without it a flat series reads 0 or 100 depending on whether
+   the comparison is `<` or `<=`, and the honest answer for "today is exactly typical" is
+   50.
+
+### Implausible IV is dropped, never clamped
+
+Bounds 1–200%. Step 1.1b measured 419.45% from a zero-volume deep-ITM strike carrying a
+stale `last`. Clamping to a ceiling keeps a fabricated number in the series; dropping
+leaves an honest gap. `combine_atm_iv` holds the rule and both the domain path and the
+Parquet reader call it, so the archive reader cannot drift from the snapshot path.
+
+### Cross-check against our own captured data
+
+ATM IV read back from the archive: **NIFTY 10.5%, COALINDIA 17.2%, TITAN 17.8%, LT 19.1%,
+RELIANCE 23.5%, HINDALCO 23.7%.** The index sits well below the 20.3% stock mean, which is
+the coarse directional check `docs/12` asks for — a basket cannot be the most volatile
+thing in it, so an index above the stock mean would mean a sign or column error. Now an
+automated check rather than an eyeball.
+
+### The step is NOT finished, and the check says so
+
+`docs/10` requires "ranks computed for the **full universe**". Only NIFTY and RELIANCE have
+daily bars — the 1.4 backfill was run against two hardcoded instruments in its verify
+script, never across the universe. Every other name correctly produces no rank at all,
+which is why seven checks pass while the step is incomplete.
+
+`the_universe_has_the_bar_history_the_proxy_needs` reports **2 of 26** and fails by
+design, in the same way `verify 1_2` fails on the unsigned thresholds. It is a job to run,
+not a defect to fix: there is no `trading-desk backfill` command yet, and adding one plus
+running ~24 names of live Dhan history is a scope and API-usage decision for the user.
+
+### Verified — `verify 1_8` 7 of 8
+
+The one failure is the universe-coverage check above. `make check` clean: 429 tests,
+4 contracts kept.
+
+### Ports touched
+
+`BarStorePort.daily_closes` and `ChainArchivePort.atm_iv_series` added, with both fakes
+updated. mypy named every drifting fake the moment each port changed.
+
+---
+
+## 2026-10-18 (late) — Step 1.9: backup and restore drill
+
+`domain/backup.py`, `adapters/backup/postgres_dump.py`, `ports/backup.py`,
+`application/backup.py`, `scripts/backup.py`, `verify 1_9`,
+`docs/15-restore-procedure.md`, and `make backup` / `make restore-drill`.
+
+### The point of the step, demonstrated on the first run
+
+`docs/12` insists: **"the only valid verification is a restore you performed."** So the
+verify script takes a real backup and performs a real restore into a scratch database,
+every run. It does not read a script and conclude it would work.
+
+The first drill failed:
+
+```
+pg_restore: error: COPY failed for table "metadata":
+duplicate key value violates unique constraint "metadata_pkey"
+Key (key)=(exported_uuid) already exists
+```
+
+The dump exited zero and was the right size. Everything about it looked healthy. Only
+attempting the restore showed otherwise. Adding TimescaleDB's documented
+`timescaledb_pre_restore()` / `post_restore()` calls fixed it.
+
+### I then overstated what that proved, and the induction caught me
+
+I wrote into the adapter docstring that the TimescaleDB calls were "mandatory, not
+optional" and that "every backup taken before today would have been worthless". Inducing
+the guard disproved it: the naive path now succeeds against **that same dump and every
+other dump taken today**. Five dumps, all restore fine without the extra calls.
+
+So the failure was real, is not reproducible, and its trigger is unknown. The docstrings
+and `docs/15` have been corrected to say exactly that, the calls stay because they are
+cheap and documented, and the episode is logged as **ISS-020 — open**, not closed with a
+story I cannot support. Writing a confident causal explanation from a single observation
+was the mistake; the only reason it did not survive into the repo is that the guard got
+induced.
+
+### What the drill actually proves now
+
+```
+15 tables (5 non-empty) matched exactly, 3448 rows, archive digest matched
+```
+
+Two guards stop that from being vacuous:
+
+- **Rows must actually have been compared.** "15 tables matched exactly" is equally true
+  of fifteen empty tables; a drill comparing zero rows is reported as a failure.
+- **The archive digest hashes each file's path as well as its contents**, so a renamed or
+  missing Parquet partition changes it. Hashing contents alone would let a lost partition
+  pass if another file happened to fill the gap.
+
+### Restoring over the live database is a checked precondition
+
+The unrecoverable mistake in this whole area is pointing a restore at the live database.
+`scratch_name` and `refuse_unsafe_restore` make it checked rather than conventional, the
+scratch database is dropped in a `finally` even when the restore fails, and `verify 1_9`
+offers the live name plus two unrelated names and requires all three to be rejected.
+
+A test that tried to induce that guard *through* `RestoreDrill` failed to raise — because
+`scratch_name` always appends a suffix, so the branch is unreachable from there. Rather
+than contrive a way to reach it, the test now asserts the real property (the computed
+target is never the live name, for any database name) and the guard is induced directly
+in the domain tests. The defensive branch stays for a future caller that builds a target
+some other way.
+
+### import-linter caught application → adapters again
+
+`application/backup.py` imported `PostgresBackupTool` directly. Third occurrence of this
+in the project. Fixed with `ports/backup.py` — which also means the drill is now testable
+against `FakeBackupTool` with no Postgres and no possibility of touching real data. Ports
+are 15, fakes 15, `verify 0_6` updated.
+
+### Verified — `verify 1_9` 6 of 7
+
+The failure is `backups_are_copied_offsite`, by design. `data/backups/` sits on the same
+disk as the database: that survives a dropped table and a bad migration, not a lost
+laptop — which is the scenario the option-chain archive most needs protecting from.
+`docs/10` asks for a versioned object-storage bucket, which needs a provider, an account
+and credentials. That is the user's decision and cost, so the check reports the gap rather
+than quietly omitting it.
+
+**Also still outstanding: a restore performed by a human.** `docs/10` says the step is
+done when *you* have personally restored once. The automated drill proves the mechanism;
+it does not prove that section 4 of `docs/15` reads clearly at the moment it is needed.
+
+`make check` clean: 456 tests, 4 contracts kept.

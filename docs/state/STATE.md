@@ -8,9 +8,9 @@ in `DEVLOG.md`.
 
 **Updated:** 2026-10-18
 **Phase:** 1 — The data spine (next). **Phase 0 complete.**
-**Active step:** 1.5a and 1.5b both complete. 1.5b now ingests SEBI's RSS (compliant,
-verified 7/7 live); RBI rejected on its terms (ISS-015).
-Next is 1.3b (websocket, needs a live session) or 1.7 (journal schema)
+**Active step:** 1.9 backup and restore drill — verified 6/7, a real restore performed
+(3,448 rows matched). Offsite copy outstanding, your provider decision.
+Next is the universe backfill (2f), then 1.3b (websocket, needs a live session)
 **Package name:** `trading_desk` (decided 2026-10-15)
 
 ## Done
@@ -90,6 +90,21 @@ a schedule that is started once a day. See ISS-005.
 2d. **NSE poller User-Agent (ISS-013)** — their robots.txt permits the path but their bot
    protection only answers a browser string. Kept on the basis that it is mandated public
    disclosure; say if you would rather drop it
+2f. **Universe backfill — a decision for you, blocking 1.8.** Only NIFTY and RELIANCE
+   have daily bars; the 1.4 backfill ran against two hardcoded instruments. The other 24
+   starter names produce no IV rank at all (correctly — they refuse rather than guess).
+   Closing it needs a `trading-desk backfill` command and ~24 names × 940 bars of live
+   Dhan history. Say go and it is about ten minutes of work plus a few minutes of API time
+2h. **Offsite backup provider — blocking 1.9.** Backups are local only, on the same
+   disk as the database. That survives a dropped table, not a lost laptop, and the
+   option-chain archive cannot be re-fetched at any price. Needs a versioned bucket
+   (S3, B2, R2 — a few rupees a month) plus credentials. Tell me which and I will wire it
+2i. **Perform one restore by hand.** `docs/10` says 1.9 is done when *you* have restored
+   once. The automated drill proves the mechanism; walking `docs/15` §4 by hand proves the
+   procedure reads clearly under pressure. ~15 minutes, no risk — it uses a scratch DB
+2g. **IV-rank threshold definition.** `docs/06` says 60 / 70 / 35 but does not say whether
+   those are IV *rank* or IV *percentile*. They are different numbers. This implements
+   percentile, per `docs/10`. Confirm before Setup A gates on them
 2b. **Liquidity thresholds** in `config/exchange_rules.yaml` — turnover ₹50L, OI 50,000,
    25% priced legs, 25 stocks. `verified: false`, and `verify 1_2` fails on that check by
    design. Set permissive on purpose; tighten once the first survey shows the real spread
@@ -114,6 +129,9 @@ a schedule that is started once a day. See ISS-005.
 | 1.5a exchange filings | PASS 8/8 | 1,538 filings stored live from NSE, free |
 | 1.5b news articles | PASS 7/7 | **25 SEBI articles live**; 5 guards induced. RBI excluded (ISS-015) |
 | 1.6 calendars | PASS 6/6 | expiry list audits the holiday file; found Guru Nanak missing |
+| 1.7 journal schema | PASS 8/8 | 5 tables, 10 append-only triggers; UPDATE/DELETE/TRUNCATE all refused |
+| 1.8 IV rank | **7 of 8** | proxy path live; `universe_has_bar_history` fails — 2 of 26 names |
+| 1.9 backup & restore | **6 of 7** | real restore matched 3,448 rows; `copied_offsite` fails by design |
 
 No defects outstanding: one closed market, one decision.
 
