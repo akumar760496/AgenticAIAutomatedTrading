@@ -47,11 +47,16 @@ def run_step(step_id: str) -> int:
             f"  [{mark}] {result.name:<{name_width}} = {result.measured:<24} ({result.requirement})"
         )
 
+    # Always counts *passes*, both ways round. It used to print the number of
+    # failures on the FAIL line and the number of passes on the PASS line, so
+    # "FAIL (1 of 7)" meant six checks had passed. Read as a score, it looked
+    # like a near-total collapse.
     failed = [r for r in results if not r.passed]
+    passed = len(results) - len(failed)
     if failed:
-        print(f"  RESULT: FAIL ({len(failed)} of {len(results)})")
+        print(f"  RESULT: FAIL ({passed} of {len(results)} passed, {len(failed)} failed)")
         return 1
-    print(f"  RESULT: PASS ({len(results)} of {len(results)})")
+    print(f"  RESULT: PASS ({passed} of {len(results)} passed)")
     return 0
 
 

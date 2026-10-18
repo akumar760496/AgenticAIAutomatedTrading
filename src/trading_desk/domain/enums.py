@@ -46,7 +46,9 @@ class Horizon(StrEnum):
 class SourceTier(StrEnum):
     """How much a source is trusted. Drives the credibility gate in Setup A.
 
-    EXCHANGE is fact: it came from an NSE/BSE filing. Everything below is reporting.
+    EXCHANGE is fact: a legally-mandated public disclosure from the exchange or
+    the regulator - an NSE/BSE filing, or a SEBI order or circular. Everything
+    below is reporting *about* such a fact, and is discounted accordingly.
     """
 
     EXCHANGE = "EXCHANGE"

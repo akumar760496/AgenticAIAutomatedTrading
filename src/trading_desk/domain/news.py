@@ -14,6 +14,18 @@ from trading_desk.domain.enums import SourceTier
 
 
 @dataclass(frozen=True)
+class FeedFailure:
+    """A source that could not be read on a given poll, and why.
+
+    Carried back from the adapter so the ingest can alert. A feed that 403s and
+    a feed with no news both return zero articles; only this tells them apart.
+    """
+
+    name: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class NewsArticle:
     """One article from one publisher.
 

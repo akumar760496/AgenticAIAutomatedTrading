@@ -1,0 +1,126 @@
+# How a company is named in prose, mapped to its exchange symbol.
+#
+# **Substring matching is forbidden here, and this file is why.** "Tata Motors"
+# contains "Tata", which also starts "Tata Steel" and "Tata Consultancy". "HDFC"
+# is a prefix of "HDFC Bank" but they were different listed companies. "Bajaj
+# Finance" and "Bajaj Finserv" differ by four characters and move on different
+# news. A substring match links a story to the wrong instrument, and a thesis on
+# the wrong instrument is worse than no thesis - it looks researched.
+#
+# Matching is whole-phrase against a normalised form (lowercased, punctuation
+# stripped, runs of whitespace collapsed), longest alias first so that
+# "Bajaj Finserv" is tested before "Bajaj".
+#
+# A bare surname or group name is NEVER an alias. "Tata", "Bajaj", "Adani" and
+# "Mahindra" are deliberately absent: they are ambiguous between listed entities
+# and resolving them would be guessing.
+
+version: 1
+effective_from: 2026-10-18
+source: "hand-written from company legal names; extend as misses are found"
+
+aliases:
+  RELIANCE:
+    - Reliance Industries
+    - Reliance Industries Limited
+    - RIL
+  HDFCBANK:
+    - HDFC Bank
+    - HDFC Bank Limited
+  ICICIBANK:
+    - ICICI Bank
+    - ICICI Bank Limited
+  SBIN:
+    - State Bank of India
+    - SBI
+  AXISBANK:
+    - Axis Bank
+    - Axis Bank Limited
+  KOTAKBANK:
+    - Kotak Mahindra Bank
+    - Kotak Bank
+  INFY:
+    - Infosys
+    - Infosys Limited
+  TCS:
+    - Tata Consultancy Services
+    - TCS
+  HCLTECH:
+    - HCL Technologies
+    - HCL Tech
+  BHARTIARTL:
+    - Bharti Airtel
+    - Airtel
+  LT:
+    - Larsen and Toubro
+    - Larsen & Toubro
+    - L&T
+  ITC:
+    - ITC Limited
+    - ITC
+  HINDUNILVR:
+    - Hindustan Unilever
+    - HUL
+  MARUTI:
+    - Maruti Suzuki
+    - Maruti Suzuki India
+  TATASTEEL:
+    - Tata Steel
+    - Tata Steel Limited
+  JSWSTEEL:
+    - JSW Steel
+  HINDALCO:
+    - Hindalco
+    - Hindalco Industries
+  BAJFINANCE:
+    - Bajaj Finance
+    - Bajaj Finance Limited
+  SUNPHARMA:
+    - Sun Pharma
+    - Sun Pharmaceutical Industries
+  M&M:
+    - Mahindra and Mahindra
+    - Mahindra & Mahindra
+    - M&M
+  TITAN:
+    - Titan Company
+    - Titan Industries
+  ADANIENT:
+    - Adani Enterprises
+    - Adani Enterprises Limited
+  NTPC:
+    - NTPC
+    - NTPC Limited
+  COALINDIA:
+    - Coal India
+    - Coal India Limited
+
+# Names that look like a universe member and are not. Matching one of these means
+# the article is about a different company, so the article must NOT be linked -
+# and saying so explicitly is stronger than hoping the alias list stays exclusive.
+confusable:
+  - Tata Motors          # not in the universe; shares a prefix with TATASTEEL and TCS
+  - Tata Power
+  - Tata Chemicals
+  - Tata Elxsi
+  - Bajaj Finserv        # a separate listing from BAJFINANCE
+  - Bajaj Auto
+  - Bajaj Holdings
+  - HDFC Life
+  - HDFC AMC
+  - ICICI Prudential
+  - ICICI Lombard
+  - SBI Life
+  - SBI Cards
+  - Adani Ports
+  - Adani Green
+  - Adani Power
+  - Adani Transmission
+  - Kotak Mahindra Prime
+  - JSW Energy
+  - JSW Infrastructure
+  - Mahindra Logistics
+  - Mahindra Holidays
+  - Tech Mahindra        # distinct from M&M
+  - Reliance Power       # unrelated to RELIANCE
+  - Reliance Infrastructure

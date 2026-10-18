@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Protocol
 
-from trading_desk.domain.news import Filing, NewsArticle
+from trading_desk.domain.news import FeedFailure, Filing, NewsArticle
 
 
 class NewsPort(Protocol):
@@ -19,6 +19,15 @@ class NewsPort(Protocol):
 
         Returns the full body, never a summary. Deduplication happens later, in the
         news agent, so the raw record keeps every outlet that carried the story.
+        """
+        ...
+
+    def recent_failures(self) -> list[FeedFailure]:
+        """Feeds that could not be read on the last `fetch_since`.
+
+        Part of the port rather than an adapter detail, because a source going
+        dark changes what the briefing may claim. Without it a 403 and a quiet
+        news day are the same empty list (CLAUDE.md rule 6).
         """
         ...
 

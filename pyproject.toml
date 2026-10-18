@@ -18,6 +18,10 @@ dependencies = [
     "pyyaml>=6.0",
     # Step 1.1c: scheduling the snapshotter.
     "apscheduler>=3.10,<4",
+    # Step 1.5b: an explicit CA bundle. httpx 0.28 verifies against the system
+    # OpenSSL store, which on macOS lacks the root SEBI's certificate chains to;
+    # every request failed TLS and the error was swallowed as an empty feed.
+    "certifi>=2024.8.30",
 ]
 
 [project.scripts]

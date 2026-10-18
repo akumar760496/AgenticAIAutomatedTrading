@@ -6,9 +6,11 @@ in `DEVLOG.md`.
 
 ---
 
-**Updated:** 2026-10-16
+**Updated:** 2026-10-18
 **Phase:** 1 — The data spine (next). **Phase 0 complete.**
-**Active step:** 1.3a, 1.4 and 1.6 done — next is 1.5 (news) or 1.3b (websocket, needs a live session)
+**Active step:** 1.5a and 1.5b both complete. 1.5b now ingests SEBI's RSS (compliant,
+verified 7/7 live); RBI rejected on its terms (ISS-015).
+Next is 1.3b (websocket, needs a live session) or 1.7 (journal schema)
 **Package name:** `trading_desk` (decided 2026-10-15)
 
 ## Done
@@ -77,6 +79,17 @@ a schedule that is started once a day. See ISS-005.
 1. **Dhan Data API subscription (₹499 + GST/month)** — credentials are in `.env`, but the
    paid plan is still required for live feed, option chain and historical bars (Step 1.1)
 2. Threshold sign-off: 1.5× ATR, IV rank 60/70/35, credibility 0.7 (`docs/06` §2)
+2c. **Licensed news API — still a purchase decision (ISS-010).** No commercial Indian
+   financial publisher permits this use; 16 feeds surveyed, clauses quoted in
+   `config/news_sources.yaml`. SEBI + NSE filings now cover primary regulatory
+   disclosure for free. **Nothing is blocked today** — revisit only if the briefings
+   visibly want market commentary
+2e. **Optional, free, your call: write to RBI** asking permission to cache and deep-link
+   their RSS feeds (ISS-015). Their terms prohibit both without written permission, so
+   the feeds are excluded despite being live, fresh and useful. One email unblocks them
+2d. **NSE poller User-Agent (ISS-013)** — their robots.txt permits the path but their bot
+   protection only answers a browser string. Kept on the basis that it is mandated public
+   disclosure; say if you would rather drop it
 2b. **Liquidity thresholds** in `config/exchange_rules.yaml` — turnover ₹50L, OI 50,000,
    25% priced legs, 25 stocks. `verified: false`, and `verify 1_2` fails on that check by
    design. Set permissive on purpose; tighten once the first survey shows the real spread
@@ -94,13 +107,18 @@ a schedule that is started once a day. See ISS-005.
 | 0.5 infrastructure | PASS 8/8 | now compares against the head revision |
 | 0.6 ports & fakes | PASS 6/6 | 10 ports, 10 fakes |
 | 1.1a chain adapter | PASS 5/5 | live NIFTY chain, 235 strikes, greeks present |
-| 1.1b archive & snapshotter | **7/8** | `live_capture` needs a trading day |
-| 1.2 universe service | **6/7** | `thresholds_reviewed` needs your sign-off |
+| 1.1b archive & snapshotter | **7 of 8** | `live_capture` needs a trading day |
+| 1.2 universe service | **6 of 7** | `thresholds_reviewed` needs your sign-off |
 | 1.3a schema & bar builder | PASS 8/8 | |
 | 1.4 historical backfill | PASS 8/8 | 940 daily bars/name; close agrees with the chain spot |
+| 1.5a exchange filings | PASS 8/8 | 1,538 filings stored live from NSE, free |
+| 1.5b news articles | PASS 7/7 | **25 SEBI articles live**; 5 guards induced. RBI excluded (ISS-015) |
 | 1.6 calendars | PASS 6/6 | expiry list audits the holiday file; found Guru Nanak missing |
 
 No defects outstanding: one closed market, one decision.
+
+**Note on reading this table:** the runner used to print `FAIL (1 of 7)` meaning *one
+failed*. Both result lines now count passes (ISS-017).
 
 **Token:** re-issued 2026-10-18 16:36 IST, valid 24.0h (expires ~16:36 on the 19th).
 **Delete `DHAN_ACCESS_TOKEN` from `.env`** — nothing reads it any more, and a stale copy

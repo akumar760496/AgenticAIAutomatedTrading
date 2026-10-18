@@ -855,6 +855,7 @@ source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "apscheduler" },
+    { name = "certifi" },
     { name = "httpx" },
     { name = "polars" },
     { name = "psycopg", extra = ["binary"] },
@@ -882,6 +883,7 @@ dev = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.13" },
     { name = "apscheduler", specifier = ">=3.10,<4" },
+    { name = "certifi", specifier = ">=2024.8.30" },
     { name = "detect-secrets", marker = "extra == 'dev'", specifier = ">=1.5" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.115" },

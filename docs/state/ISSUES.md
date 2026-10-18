@@ -172,6 +172,153 @@ logged and work continues — no drive-by fixes inside a step.
 - **Due before:** 2026-11-08.
 - **Status:** open · **Owner:** me (needs the NSE circular, same one as the holiday list)
 
+### ISS-009 — NSE announcements truncate silently without a date range
+- **Found:** 2026-10-18, step 1.5a
+- **Severity:** would have lost filings while looking healthy
+- **Symptom:** `GET /api/corporate-announcements?index=equities` returns the **twenty most
+  recent** announcements and gives no indication it has truncated - no count, no cursor,
+  no flag. The same call with `from_date`/`to_date` returned **1,368** for a three-day
+  window and **1,542** for four days.
+- **Impact:** during market hours twenty market-wide announcements can be a few minutes.
+  A poller on a fifteen-minute interval would have missed most filings every single run
+  and reported success each time. Caught only by noticing that a four-day lookback
+  returned exactly 20 rows.
+- **Fix:** the adapter always sends `from_date` and `to_date`, derived from `since` in IST.
+  `verify 1_5a` requires at least 100 filings in a four-day window, so a silent revert to
+  the truncating form fails.
+- **Also worth knowing:** the endpoint refuses a plain request entirely - not a 403, no
+  response at all. It needs a browser User-Agent and a Referer naming the filings page, and
+  the adapter visits that page once to pick up a cookie.
+- **Status:** closed · **Owner:** me
+
+### ISS-010 — News articles and near-duplicate detection need provider decisions
+- **Found:** 2026-10-18, step 1.5a
+- **Severity:** blocks FR-3.2 and FR-3.3
+- **What is done:** exchange filings (FR-3.1) are live and free from NSE. Entity resolution
+  (FR-3.4) passes its fixture set. Untrusted-input handling (FR-3.9) is in place. Exact
+  duplicate grouping by content hash works.
+- **What is blocked, and why it is the user's call not mine:**
+  1. **A news API for articles.** The build plan says to check each provider's licence
+     terms, some of which prohibit automated storage - and FR-3.2 requires storing the full
+     raw body. That is a terms-and-cost decision.
+  2. **An embedding model for near-duplicate detection.** Hashing catches verbatim
+     syndication; it cannot catch the same story reworded, which needs embeddings. Either a
+     local model (free, no key, a sizeable dependency) or a hosted one (an API key and a
+     per-call cost).
+- **Prepared for both:** `articles` exists with an unused `embedding vector` column, with no
+  dimension pinned so either model lands without a migration. An ANN index needs a fixed
+  dimension and is deliberately deferred until the model is chosen.
+- **REOPENED 2026-10-18, same day.** The RSS answer was wrong. See ISS-014: both candidate
+  publishers' terms of use prohibit this use, and the feeds have been removed. A licensed
+  news API is now the only route to FR-3.2, which makes this a purchase decision again.
+- **Partially addressed 2026-10-18 evening.** SEBI's RSS is now wired in and compliant, so
+  the `articles` pipeline is live rather than dormant. It does **not** close FR-3.2: of the
+  first 25 articles stored, **0 linked to a universe instrument** — the feed is dominated
+  by Securities Appellate Tribunal appeals naming individuals. SEBI informs enforcement
+  risk and eligibility; it is not a substitute for journalism and not a sentiment source.
+  A licensed API remains the only route to news articles, and remains the user's call.
+- ~~Resolved 2026-10-18. The user chose RSS-only plus local similarity. No API
+  purchase, no key, no recurring cost.~~ FR-3.2's "full raw text" is met as *the full text
+  the publisher syndicates* - a 170-300 character summary - and the reasoning is that the
+  authoritative detail for any corporate event is already held in full, free, from the NSE
+  filing. A news article contributes timing and framing, both of which survive a summary.
+  Near-duplicate detection uses character-shingle Jaccard rather than embeddings: no model
+  download, deterministic, explainable, and it would not have been improved by embeddings
+  (see ISS-012).
+- **Status:** closed · **Owner:** user
+
+### ISS-011 — The near-duplicate threshold is tuned on constructed headlines
+- **Found:** 2026-10-18, step 1.5b
+- **Severity:** low now, rises with volume
+- **Symptom:** `DEFAULT_THRESHOLD = 0.22` in `domain/similarity.py` sits in a measured but
+  narrow gap: for one company, different events scored 0.068-0.179 and the same event
+  reworded scored 0.26 upward. The measurements came from about a dozen headlines written
+  by hand, not from a month of real feed data.
+- **Impact:** too low merges two genuine stories and loses one, which is the worse
+  direction because a missing story cannot be noticed downstream. Too high counts one
+  story several times and overstates consensus, which is what the credibility gate is
+  meant to weigh.
+- **Mitigation:** grouping is partitioned by instrument, so the threshold can only ever
+  merge stories about the same company - which bounds the damage considerably.
+- **Due:** re-measure against stored articles once a few weeks have accumulated. The data
+  to do it with is being collected now.
+- **Status:** open · **Owner:** me
+
+### ISS-012 — Text similarity alone cannot group news, at any threshold
+- **Found:** 2026-10-18, step 1.5b, before shipping
+- **Severity:** would have attributed one company's news to another
+- **Symptom:** measured on realistic headline shapes:
+  - `"TCS wins $1 billion deal with European retailer"` against
+    `"Infosys wins $1 billion deal with European retailer"` -> **0.837**
+  - `"Infosys Q2 profit rises 12% beating estimates"` against
+    `"Infosys second quarter profit up 12 percent, beats estimates"` -> **0.260**
+  Same-story scores ranged 0.26-0.60 and different-story reached 0.84. The distributions
+  overlap completely, so no cut-off separates them.
+- **Why embeddings would not have helped:** those two deal headlines are semantically
+  near-identical. A semantic model scores them *higher*, not lower. This is a property of
+  the problem, not of the method - which is worth recording, because "use embeddings
+  instead" is the obvious and wrong response.
+- **Fix:** grouping is partitioned by resolved instrument and similarity only decides
+  within a partition. Entity resolution already passes its fixture set at 100%, so the
+  partition is reliable. Within one company the gap was clean.
+- **Enforced by:** `verify 1_5b` asserts the cross-company pair stays in two groups *and*
+  that its text similarity is above 0.7, so the check cannot pass for the wrong reason.
+- **Status:** closed · **Owner:** me
+
+### ISS-013 — The NSE poller must present a browser User-Agent
+- **Found:** 2026-10-18, compliance review of step 1.5
+- **Severity:** unresolved tension, not a defect
+- **Symptom:** NSE's `robots.txt` says `Allow: /` and does not disallow
+  `/api/corporate-announcements`. Their bot protection nonetheless returns **no response at
+  all** to any non-browser User-Agent - including the conventional honest-bot form
+  `Mozilla/5.0 (compatible; trading-desk/0.1; +url)`. Only a full Chrome string works.
+- **So:** there is no honest-identification route to data their own robots.txt permits.
+- **Kept, on these grounds:** the content is SEBI LODR Regulation 30 disclosure, which
+  companies are legally *required* to publish for public dissemination - it is regulatory
+  filing data, not a publisher's copyrighted reporting. The path is explicitly allowed by
+  robots.txt. Volume is a few requests a day. Use is personal and non-redistributive.
+- **But it is a tension, not a clean position**, and the user has been told rather than
+  left to discover it. If they would rather not carry it, the poller is one adapter and
+  removing it costs nothing but the filings archive.
+- **Status:** open, accepted with the user informed · **Owner:** user
+
+### ISS-014 — Both RSS publishers' terms prohibit this use
+- **Found:** 2026-10-18, hours after shipping 1.5b, when the user asked for per-feed legal
+  detail
+- **Severity:** compliance breach, corrected the same day
+- **What I checked before building:** robots.txt for every host (all permitted the feed
+  path, no crawl-delay) and whether each served an honestly-identified client.
+- **What I did not check, and should have:** the terms of use. **robots.txt is not a
+  licence.** It says what a crawler may fetch, not what the fetcher may then do.
+- **Economic Times** (terms: economictimes.indiatimes.com/terms-conditions) carries an
+  explicit "AI and Text/Data Mining Restriction": absent a separate written licence, no one
+  may "access, copy, extract, scrape, crawl, index, **cache**, mine or otherwise use the
+  content ... for the purpose of ... **(d) any other automated or technology-enabled
+  summarization or aggregation in order to generate real-time answers, outputs or
+  derivative content**", and it "applies regardless of whether such access is automated ...
+  or manual". The only carve-out is search-engine indexing. An automated daily briefing is
+  the described use, almost word for word.
+- **Mint / HT Media** (terms: hindustantimes.com/terms-of-use) prohibits using "any
+  'deep-link', 'page-scrape', '**robot**', '**spider**' or other **automatic device,
+  program, algorithm or methodology** ... to access, acquire, copy or monitor any portion of
+  the Platform/Website or any content or information". No personal-use exception on that
+  clause.
+- **Action taken the same session:**
+  - `config/news_sources.yaml` `feeds:` is now empty; both are under `excluded` with the
+    clause quoted and a link to the terms.
+  - **All 64 collected articles and the source rows were deleted.** Content that should not
+    have been gathered should not be retained.
+  - `verify 1_5b` now fails if any feed from a forbidding publisher is configured, and
+    asserts zero article rows. Induced to confirm both fire.
+  - The adapter and grouping logic are kept and unit-tested. What is missing is permission,
+    and a licensed feed drops into the same list.
+- **Lesson:** robots.txt plus an honest User-Agent was not sufficient diligence. The terms
+  of use are the binding document and must be read *before* a source is wired in, not after.
+- **Second-order lesson:** inducing this guard by editing the real config caused a real
+  fetch of 28 ET articles, which then had to be purged too. A compliance guard must be
+  induced against a temporary config, never the live one.
+- **Status:** closed · **Owner:** me
+
 ## Closed
 
 ### ISS-001 — Dhan websocket instrument cap unknown
@@ -187,3 +334,70 @@ logged and work continues — no drive-by fixes inside a step.
   connection disconnects the first with code 805.
 - **Consequence:** Step 1.2's universe is not capped by the feed. The real constraint on
   universe size is option-chain snapshot volume and LLM cost per cycle, not subscriptions.
+
+### ISS-015 — RBI's terms prohibit caching and deep-linking
+- **Found:** 2026-10-18 evening, wiring the surviving regulatory feeds in
+- **Severity:** a source rejected, not a breach — caught before any content was stored
+- **Symptom:** RBI's press-release and notification RSS feeds are live, fresh and answer an
+  honest User-Agent. An earlier reading of RBI's *Disclaimer* page found only liability
+  language and concluded there was no use restriction. **That reading stopped too early.**
+  Further down the same Terms & Conditions of Use:
+  > "Except as set forth below, **caching** and links to, and the framing of this Web Site
+  > or any of the contents **are prohibited**."
+  The only carve-outs are a link to the **Home Page** "upon notifying RBI in writing", and
+  a link to an internal page requiring that "the user must make a specific request for, and
+  secure permission from RBI prior to hyper-linking".
+- **Why that bites:** storing feed items is caching, and every feed item is a deep link to
+  an internal page. Both are explicitly named as prohibited, so RBI does not merely fail
+  the ISS-014 standard of "clearly allows" — it clearly forbids.
+- **Not relied on either way:** RBI's robots.txt cannot be read at all. It returns an
+  "Unauthorised Access" page to an honest client, which is a WAF inconsistency rather than
+  a policy statement.
+- **Unblock route, and it is free:** a written permission request to RBI to cache and
+  deep-link the RSS feeds. If granted, the entry moves from `excluded` into `feeds` with
+  tier `EXCHANGE` and an `rfc822_naive_ist` date format — RBI stamps
+  `"Fri, 16 Oct 2026 18:30:00"` with no offset, and the times are IST. That format does not
+  exist in `domain/feed_dates.py` yet, deliberately: no consumer, no code.
+- **Lesson, and it is the second half of ISS-014's:** read the *whole* terms page, not the
+  first section that looks like the terms. The operative clause was several screens below a
+  liability disclaimer that read as the whole document.
+- **Status:** open, source excluded · **Owner:** user (whether to request permission)
+
+### ISS-016 — Three silent-failure modes in the RSS adapter
+- **Found:** 2026-10-18 evening, wiring SEBI in
+- **Severity:** would have shipped a feed that was permanently empty and looked healthy
+- **Symptom:** three independent faults, each of which produced an empty article list
+  indistinguishable from a quiet news day:
+  1. **TLS.** httpx 0.28 verifies against the system OpenSSL store — 128 roots here, not
+     including Sectigo Root R46, which SEBI's certificate chains to. Every request raised
+     `CERTIFICATE_VERIFY_FAILED` and the per-feed handler turned it into `[]`. `curl` and
+     `openssl s_client` both verified fine against the same host, which is what made it
+     hard to see: the failure was Python-specific, not network- or host-specific.
+  2. **Date format.** SEBI's `pubDate` is `"16 Oct, 2026 +0530"`.
+     `parsedate_to_datetime` raises `ValueError`, and every item was skipped — 30 of 30.
+  3. **Date-only windowing.** Items stamped midnight, filtered by instant, means the second
+     poll of any day discards the entire feed.
+- **Fix:** `certifi` named explicitly on the client and declared in `pyproject.toml`; the
+  date format declared per feed in config and parsed by `domain/feed_dates.py`; date-only
+  feeds windowed by calendar day, which is safe because the store is
+  `ON CONFLICT DO NOTHING` on the item link.
+- **The structural fix, which matters more than the three:** `NewsPort` gained
+  `recent_failures()`. The adapter now records a transport error, a non-200, *and* the
+  subtle case — items present in the XML but none parseable, which is exactly what a
+  publisher changing their date format looks like — and `ArticleIngest` raises a WARNING.
+  Returning `[]` on an error was a rule 6 violation hiding in a reasonable-looking
+  `except`. One bad feed still never ends the poll.
+- **All five guards induced** against temporary configs and in-memory clients, never the
+  live ones — see the DEVLOG table for this date.
+- **Status:** closed · **Owner:** me
+
+### ISS-017 — The verify runner counted failures and passes in the same slot
+- **Found:** 2026-10-18 evening, misreading my own sweep
+- **Severity:** cosmetic, but it caused a real false alarm
+- **Symptom:** `RESULT: FAIL (1 of 7)` meant *one check failed*; `RESULT: PASS (7 of 7)`
+  meant *seven passed*. Step 1.2 — six checks passing, one awaiting the user's threshold
+  sign-off — printed as `FAIL (1 of 7)` and read as a near-total collapse. I briefly
+  believed I had broken it.
+- **Fix:** both lines count passes, and the FAIL line names the failure count separately:
+  `FAIL (6 of 7 passed, 1 failed)`.
+- **Status:** closed · **Owner:** me

@@ -1,0 +1,186 @@
+# RSS feeds we read.
+#
+# **No commercial news publisher is on this list, and that is deliberate.**
+#
+# Sixteen feeds were surveyed on 2026-10-18 and every Indian financial publisher
+# whose terms could be read prohibits automated aggregation - see `excluded`
+# below, each with the clause quoted. robots.txt permitted several of those
+# paths and several served an honestly-identified client; neither is a licence.
+# The terms of use are the binding document.
+#
+# The standing rule (ISS-014): **a source is used when its terms clearly allow
+# it, not when they merely fail to forbid it.** Unread terms are not permission.
+#
+# What is left is primary regulatory disclosure, which stands on different
+# ground: a SEBI order or an NSE filing is a legally-mandated public
+# dissemination, not a publisher's copyrighted reporting.
+#
+# Nothing here may be added without reading that source's terms and recording
+# the finding, quoted, in this file.
+
+version: 3
+effective_from: 2026-10-18
+
+user_agent: "trading-desk/0.1 (personal research bot; +https://github.com/akumar760496/AgenticAIAutomatedTrading)"
+min_interval_seconds: 5
+
+feeds:
+  - name: SEBI
+    url: https://www.sebi.gov.in/sebirss.xml
+    tier: EXCHANGE
+    tier_reason: >-
+      The securities regulator publishing its own orders, circulars and
+      adjudications. Primary fact with the same standing as an exchange filing,
+      not reporting about one - which is why it sits at EXCHANGE rather than
+      TIER_1. Content is enforcement actions, appeals and policy, so it informs
+      risk and eligibility rather than sentiment.
+    # "16 Oct, 2026 +0530" - a date, an offset, no time of day. The standard
+    # RFC 822 parser raises on it and silently dropped all 30 items.
+    date_format: date_only
+    checked: 2026-10-18
+    terms: https://www.sebi.gov.in/website-policy.html
+    robots: https://www.sebi.gov.in/robots.txt
+    compliance: >-
+      robots.txt is "User-agent: * / Disallow:" with only /js and /css excluded,
+      which permits automated access to this path explicitly. The Terms of Use
+      section imposes no restriction on access or automated use - it is a
+      liability disclaimer. The Linking Policy states "We do not object to you
+      linking directly to the information that is hosted on this Website and no
+      prior permission is required for the same." Framing is prohibited; this
+      adapter does not frame, and never fetches the linked page.
+    limit: >-
+      The Copyright Policy says material "may be reproduced free of charge after
+      taking proper permission by sending a mail to us", and that where material
+      "is being published or issued to others, the source must be prominently
+      acknowledged". Private research storage is not reproduction or
+      publication, so the current use is within the policy. **If a briefing
+      built on this is ever shared beyond the operator, emailed permission and
+      prominent attribution to SEBI become required first.**
+
+excluded:
+  - name: Reserve Bank of India (press releases and notifications)
+    url: https://www.rbi.org.in/pressreleases_rss.xml
+    checked: 2026-10-18
+    terms: https://www.rbi.org.in/Scripts/Disclaimer.aspx
+    reason: >-
+      Both feeds are live, fresh and answer an honest User-Agent (press
+      releases 10 items, notifications 10 items, newest 16 Oct 2026), and the
+      content would be genuinely useful. Excluded anyway: RBI's Terms &
+      Conditions of Use state "Except as set forth below, caching and links to,
+      and the framing of this Web Site or any of the contents are prohibited."
+      The only carve-outs are a link to the Home Page "upon notifying RBI in
+      writing", and a link to an internal page for which "the user must make a
+      specific request for, and secure permission from RBI prior to
+      hyper-linking". Storing feed items is caching, and every item is a deep
+      link to an internal page. That is prohibited conduct on a plain reading,
+      not merely unaddressed. robots.txt could not be read either - it returns
+      an "Unauthorised Access" page to an honest client.
+    unblock: >-
+      Free, not a purchase: a written request to RBI for permission to cache
+      and deep-link the RSS feeds. If granted, move this entry into `feeds`
+      with tier EXCHANGE and date_format rfc822_naive_ist - the feed stamps
+      "Fri, 16 Oct 2026 18:30:00" with no offset, and the times are IST.
+
+  - name: Economic Times Markets
+    url: https://economictimes.indiatimes.com/markets/stocks/rssfeeds/2146842.cms
+    checked: 2026-10-18
+    terms: https://economictimes.indiatimes.com/terms-conditions
+    reason: >-
+      Terms of use carry an explicit "AI and Text/Data Mining Restriction"
+      prohibiting, without a separate written licence, any use of site content
+      for "(d) any other automated or technology-enabled summarization or
+      aggregation in order to generate real-time answers, outputs or derivative
+      content", and stating the restriction "applies regardless of whether such
+      access is automated ... or manual". The clause also names caching
+      explicitly. An automated daily briefing is exactly the described use. The
+      only carve-out is search-engine indexing, which this is not.
+
+  - name: Mint Markets
+    url: https://www.livemint.com/rss/markets
+    checked: 2026-10-18
+    terms: https://www.hindustantimes.com/terms-of-use
+    reason: >-
+      HT Media terms prohibit using "any 'deep-link', 'page-scrape', 'robot',
+      'spider' or other automatic device, program, algorithm or methodology ...
+      to access, acquire, copy or monitor any portion of the Platform/Website or
+      any content or information". That clause carries no personal-use
+      exception. A scheduled poller is an automatic device.
+
+  - name: Moneycontrol Business
+    url: https://www.moneycontrol.com/rss/business.xml
+    checked: 2026-10-18
+    reason: >-
+      Abandoned feed - answers HTTP 200 with valid XML whose newest item is
+      dated 23 April 2024. Dropped on quality grounds before the terms question
+      arose; its terms were never assessed.
+
+  - name: Business Standard Markets
+    url: https://www.business-standard.com/rss/markets-106.rss
+    checked: 2026-10-18
+    reason: >-
+      Returns 403 to an honestly identified client while serving a spoofed
+      browser User-Agent. Reading it would mean disguising the client to get
+      past a refusal, which is not something this project does.
+
+  # --- surveyed 2026-10-18, terms read, all rejected ---
+
+  - name: Times of India Business
+    url: https://timesofindia.indiatimes.com/rssfeeds/1898055.cms
+    checked: 2026-10-18
+    terms: https://www.indiatimes.com/termsandcondition
+    reason: >-
+      Times Internet, the same company as Economic Times, and the identical "AI
+      and Text/Data Mining Restriction" applies. Also separately prohibits any
+      "robot, spider, scraper, or other automated or manual means to access the
+      Website or copy any Content". Feed itself is live and fresh.
+
+  - name: CNBC TV18 Market
+    url: https://www.cnbctv18.com/commonfeeds/v1/cne/rss/market.xml
+    checked: 2026-10-18
+    terms: https://www.cnbctv18.com/termsofuse/
+    reason: >-
+      Network18 terms prohibit use "for any purpose, including creating large
+      language models and/or training of A.I. tools, unless separately and
+      specifically authorized in writing", and separately prohibit "scrape,
+      crawl, mine or extract data from the site ... without express written
+      permission". Feed is live with 200 items and very fresh - and unusable.
+
+  - name: The Hindu BusinessLine
+    url: https://www.thehindubusinessline.com/markets/feeder/default.rss
+    checked: 2026-10-18
+    terms: https://www.thehindugroup.com/termsofuse.html
+    reason: >-
+      No explicit AI clause found, but THG terms restrict content to "personal
+      and non-commercial usage" and prohibit "modifying, copying, distributing"
+      it. Not clearly permitted for automated aggregation, and the standard
+      since ISS-014 is that a source is used only when the terms clearly allow
+      it - not merely when they fail to clearly forbid it. Live, 60 items, fresh.
+
+  - name: NDTV Profit
+    url: https://feeds.feedburner.com/ndtvprofit-latest
+    checked: 2026-10-18
+    reason: >-
+      Live, 20 items, fresh. No terms-of-use link found on ndtvprofit.com and
+      ndtv.com/term-of-use returns 403, so the terms could not be read. Unread
+      terms are not permission.
+
+  - name: Financial Express / Business Today / Zee Business / PIB / Reuters
+    checked: 2026-10-18
+    reason: >-
+      Rejected on availability before terms were reached. Financial Express and
+      Business Today returned HTTP 200 with zero parseable items; Zee Business
+      404; PIB 403; the Reuters feedburner endpoint is dead.
+
+# What is in use, and why each stands on different ground:
+#
+#   SEBI RSS - above, with its terms quoted and its one limit recorded.
+#
+#   NSE corporate announcements - SEBI LODR Regulation 30 disclosures, fetched
+#   by adapters/news/nse_announcements.py rather than through this file. These
+#   are filings companies are legally REQUIRED to publish for public
+#   dissemination, not a publisher's copyrighted reporting. NSE's robots.txt
+#   permits the path. The open question there is the browser User-Agent their
+#   bot protection forces; see docs/state/ISSUES.md ISS-013.
+#
+# News *journalism* remains unavailable to us at any price short of a licensed
+# API. That is a purchase decision and is recorded as ISS-010.
