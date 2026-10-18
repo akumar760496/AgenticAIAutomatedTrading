@@ -41,6 +41,34 @@ class Bar:
 
 
 @dataclass(frozen=True)
+class Tick:
+    """One trade printed by the exchange.
+
+    `quantity` is the size of **this trade**, not the day's running total. Feeds
+    differ on which they send, and the difference is invisible until volumes come
+    out roughly N times too large. Converting is the adapter's job, so that the
+    bar builder can only ever be handed the incremental form.
+
+    `sequence` is the feed's own ordering number when it provides one. It is the
+    only sound basis for discarding a duplicate: two genuine trades can share a
+    timestamp, a price and a size, so without a sequence number a repeat is
+    indistinguishable from a real second trade and must be kept.
+    """
+
+    instrument: InstrumentRef
+    price: Price
+    quantity: int
+    exchange_time: datetime
+    sequence: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.exchange_time.tzinfo is None:
+            raise ValueError(f"{self.instrument.symbol}: tick time must be tz-aware")
+        if self.quantity < 0:
+            raise ValueError(f"{self.instrument.symbol}: quantity cannot be negative")
+
+
+@dataclass(frozen=True)
 class Quote:
     """A snapshot of the top of book."""
 

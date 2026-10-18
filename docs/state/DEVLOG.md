@@ -397,3 +397,159 @@ rather than a defect.
 **Process note worth keeping:** every one of these was invisible to `make check`. 183 tests
 and four import contracts were green throughout. The verification harness earns its keep
 precisely because it checks claims the unit tests do not make.
+
+## 2026-10-18 — step 1.3a: market data schema and the bar builder
+
+Step 1.3 split, because a Sunday cannot verify a websocket. 1.3a is everything
+provable offline; 1.3b is the live feed.
+
+- **Migration 0002: `ticks`, `bars_1m`, `bars_5m`, `bars_1d`, `data_gaps`.** Four
+  hypertables plus a plain table for gaps. Verified by round-tripping the migration down
+  to 0001 and back up, and by querying `timescaledb_information.hypertables` rather than
+  trusting the migration source - a migration written correctly and never applied looks
+  identical to one that was.
+  - **Prices are BIGINT paise everywhere**, asserted against `information_schema` rather
+    than by reading the migration. A `double precision` column would round silently and
+    nothing downstream could detect it.
+  - **`ticks` has no primary key, deliberately.** Two genuine trades can share a symbol
+    and a timestamp; a key over those columns would reject real data.
+  - **`data_gaps` is a table, not a log line.** Nothing interpolates, so the gap row is
+    the only record that silence was a fault rather than a quiet market. Its ordering
+    constraint was induced, not assumed: the verify script inserts a gap that ends before
+    it starts and requires the database to refuse it.
+- **`domain/sessions.py` and `domain/bars.py`: pure, batch, no clock.** Ticks in, bars out.
+  A live feed holds one window in the application layer and calls the same function, so
+  the identical code serves the websocket and the backfill.
+- **Bars align to the session open, not the wall clock.** NSE opens 09:15, so 5m bars run
+  09:15, 09:20 ... 15:25. Aligning to the hour would leave a two-minute stub and shift
+  every later boundary - an error that reconciles perfectly against itself and not at all
+  against the exchange.
+- **The session is half-open.** 09:15:00 is in, 15:29:59 is in, 15:30:00 is out: a print
+  at the close belongs to the closing auction, which v1 does not model, so it is rejected
+  rather than crammed into the final bar.
+
+### Three decisions where the easy answer loses information
+
+- **No bar is invented for a quiet window.** An empty candle carrying the previous close
+  is a fabricated price, and once written it cannot be told from a real one.
+- **No tick is silently dropped.** Everything that does not reach a bar comes back in
+  `rejected` with a reason. A vanished tick is a volume discrepancy nobody can trace.
+- **Duplicates are only removed on a feed sequence number.** Two genuine trades can match
+  on timestamp, price and size exactly. Without a sequence number a repeat is
+  indistinguishable from a real second trade, so it is kept and volume stays honest.
+  `Tick.sequence` is optional for exactly this reason, and tested both ways.
+- **`Tick.quantity` is the size of that trade, never the running day total.** Feeds differ
+  on which they send and the difference is invisible until volumes come out N times too
+  large. Converting is the adapter's job in 1.3b - confirm which form Dhan sends before
+  writing it.
+
+### Another stale verify check
+
+`verify 0_5` asserted `migrations == ["0001"]` and failed the moment a second migration
+landed. It was asserting "0001 is applied" when it meant "the database is up to date". It
+now reads the head revision from `alembic/versions` and compares. Induced by downgrading
+to 0001 and confirming it fails, then upgrading back. That is **three stale checks in two
+days** (0.4's text scan, 0.6's port count, 0.5's revision) - each written to assert a fact
+true on the day rather than the property intended. Worth watching for in the rest.
+
+**Logged ISS-008:** Muhurat trading runs outside 09:15-15:30 and is not modelled, so that
+evening would produce no bars. Needs the NSE circular, due before 2026-11-08.
+
+## 2026-10-18 — login, and the harness was authenticating differently from the app
+
+- **Consent login ran clean: token valid for 24.0 hours.** Third measurement, same answer.
+  The lifetime is a flat 24h from issue, not a rolling or session-bound window.
+- **`verify 1_1a` still returned 401 with a fresh token**, which is what made it a bug
+  rather than an expiry. Both `step_1_1a.py` and `step_1_1b.py` were building their client
+  with `StaticTokenProvider(settings.access_token)` - the hand-pasted `DHAN_ACCESS_TOKEN`
+  from `.env` - while the application uses `StoredTokenProvider()` and the consent grant in
+  `secrets/dhan_token.json`. The two diverged the moment the consent flow landed in 1.1c:
+  327 characters in `.env`, long dead; 352 in the token store, current.
+  - **Why it matters more than a failing check:** the verification harness was exercising
+    an auth path the application no longer uses. Every "live" check it passed was evidence
+    about a code path that no longer runs in production.
+  - **Fix:** both scripts now use `StoredTokenProvider()`, and report "no stored Dhan token
+    - run: make login" rather than naming an env var that should no longer matter.
+  - After the fix, 1.1a passes 5/5 against a real NIFTY chain: 235 strikes, spot 23,146.15,
+    expiry 2026-10-19, greeks present.
+- **Fixed a check whose message contradicted its own result.** `rate_limiter_spacing`
+  reported `waited 3.50s` against a stated requirement of `>= 4.5s` and passed. The check
+  was right - a call 1s after the previous one waits out the remaining 3.5s so the two land
+  4.5s apart - but the requirement string described a different thing. A harness that prints
+  an apparent contradiction and calls it PASS teaches people to stop reading it.
+- **Left for the user to delete: `DHAN_ACCESS_TOKEN` in `.env`.** Now unused by every code
+  path and dead as a credential. Nothing reads it; it can only cause the confusion it just
+  caused. Not edited here because `.env` is the user's file.
+
+**Sweep after the fix:** 0.1, 0.3, 0.4, 0.5, 0.6, 1.1a, 1.3a all pass. 1.1b is 7/8 waiting
+on a trading day; 1.2 is 6/7 waiting on threshold sign-off.
+
+## 2026-10-18 — step 1.4 taken before 1.3b, and done
+
+**Order changed deliberately** (CLAUDE.md rule 10). 1.3b is the Dhan websocket and no ticks
+flow on a Sunday, so building it today meant writing a binary-protocol adapter against
+assumptions nothing could test - the exact pattern that has produced a finding at almost
+every step. 1.4 uses the REST history API, which answers today. Its stated dependency on
+1.3 was the bars schema, delivered in 1.3a. 1.3b follows on a trading day.
+
+### What the live probe settled before any code was written
+
+- **Response shape:** six parallel arrays (open/high/low/close/volume/timestamp), not
+  records. Lengths are checked rather than assumed, because a mismatch would pair the
+  wrong price with the wrong day silently.
+- **Prices arrive as JSON floats** (`1313.1`). Converted with `Decimal(str(value))`, never
+  `Decimal(value)`, which would preserve the binary float's error.
+- **Timestamps are a true UTC epoch landing on midnight IST** of the trading date:
+  1788201000 is 2026-08-31 18:30 UTC = 2026-09-01 00:00 IST. Taking `.date()` off the UTC
+  value gives 2026-08-31 - **every daily bar off by one day**, consistently, in a way that
+  reconciles perfectly against itself. This was the single highest-value thing probing
+  first bought.
+- **Depth: 940 daily bars back to 2023-01-02**, well past the two years required.
+- **Intraday 5m bars start at 09:15**, independently confirming the session-open alignment
+  built in 1.3a against a different endpoint.
+
+### Built
+
+`ports/history.py`, `ports/bar_store.py`, `adapters/dhan/history.py`,
+`adapters/store/bar_repository.py`, `domain/indicators.py`, `application/backfill.py`.
+
+- **Idempotency comes from the primary key plus ON CONFLICT DO NOTHING**, not read-then-
+  write: no race, and one round trip instead of two per bar. Proven live three ways - the
+  same range re-run inserted 0; a *widened* range inserted only the 246 new days per
+  symbol; 940 rows hold 940 distinct dates.
+- **Nothing is adjusted.** A move beyond 20% close-to-close is flagged with its date and
+  left alone. Dhan's history may already be adjusted, and applying a second adjustment
+  turns a visible anomaly into an invisible one.
+- **ATR returns None rather than a partial figure.** An ATR over five bars is not a less
+  precise ATR(14), it is a different number, and a gate comparing against it would be
+  acting on something nobody authorised.
+
+### A precision bug found by reasoning, then measured
+
+The first ATR used integer division at every smoothing step. Wilder's recursion feeds each
+truncated value into the next, so the errors accumulate into a one-sided bias instead of
+cancelling. Measured over 694 bars: **ATR understated by ~5 paise, every time**. On a
+₹24 ATR that is 0.2% - small, but the breakout gate asks whether a move exceeds 1.5x ATR,
+so an ATR that is reliably low is a gate that fires reliably too often. Now carries a
+Decimal and rounds once, ROUND_HALF_UP. Hand-checked: TRs 1000/800/700/1000 with period 3
+give (1000+800+700)/3 = 833.33, then (833.33x2+1000)/3 = 888.89 -> **889 paise**, which is
+what the code returns.
+
+### Cross-endpoint agreement
+
+`verify 1_4` compares the latest daily close against the option chain's spot for the same
+instrument - two unrelated endpoints with different response shapes. Both say
+**₹23,146.15**. A fixture can only prove we parse what we think Dhan sends; this is
+evidence the price mapping itself is right.
+
+### The clock check was over-broad, and my own code proved it
+
+`verify 0_4` failed on `datetime.fromtimestamp(epoch, UTC)` in the new history adapter.
+That call converts a supplied epoch and reads no clock - the ban list written yesterday
+was simply too wide. Rather than delete the rule, it was narrowed to the genuinely faulty
+form: `fromtimestamp` with no timezone uses the machine's local zone, so the same epoch
+becomes a different wall-clock time on a server elsewhere. Induced all three forms - naive
+fails, positional `UTC` passes, keyword `tz=UTC` passes.
+
+**Ports are now 12** (added HistoricalBarsPort and BarStorePort), with a fake each, and
+`verify 0_6` updated in the same change rather than a day later.

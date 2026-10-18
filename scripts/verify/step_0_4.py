@@ -63,6 +63,17 @@ def _risk_sizing_is_exact() -> bool:
     return Percent(Decimal("0.25")).of(equity).rupees() == Decimal("2500.00")
 
 
+# fromtimestamp(timestamp, tz): a timezone supplied positionally makes two args.
+FROMTIMESTAMP_ARGS_WITH_TZ = 2
+
+
+def _has_timezone(call: ast.Call) -> bool:
+    """Whether fromtimestamp was given an explicit timezone, positionally or by name."""
+    if len(call.args) >= FROMTIMESTAMP_ARGS_WITH_TZ:
+        return True
+    return any(keyword.arg == "tz" for keyword in call.keywords)
+
+
 def _clock_calls_outside_adapter() -> list[str]:
     """Only the clock adapter may read the system clock.
 
@@ -73,8 +84,16 @@ def _clock_calls_outside_adapter() -> list[str]:
 
     Catches the aliased forms too: `dt.now()` after `import datetime as dt`, and
     `date.today()`, which the text scan never looked for at all.
+
+    `fromtimestamp` is deliberately *not* banned outright. It converts a supplied
+    epoch and reads no clock, so banning it was over-broad - it flagged the Dhan
+    history adapter, which is correct code. It is still checked, but only for the
+    single-argument form: `datetime.fromtimestamp(x)` with no tz silently uses the
+    machine's local timezone, so the same epoch becomes a different wall-clock
+    time on a server in another zone. That is a real fault, just a different one
+    from reading the clock.
     """
-    banned = {"now", "today", "utcnow", "fromtimestamp"}
+    banned = {"now", "today", "utcnow"}
     offenders = []
 
     for module in sorted((ROOT / "src").rglob("*.py")):
@@ -86,14 +105,22 @@ def _clock_calls_outside_adapter() -> list[str]:
             if not isinstance(node, ast.Call):
                 continue
             function = node.func
-            if not isinstance(function, ast.Attribute) or function.attr not in banned:
+            if not isinstance(function, ast.Attribute):
                 continue
+
             # Only flag it when the receiver is a plain name - datetime.now(),
             # dt.now(), date.today(). self._clock.now() is the correct pattern
             # and must stay allowed.
             receiver = function.value
-            if isinstance(receiver, ast.Name) and receiver.id in {"datetime", "date", "dt", "time"}:
+            if not isinstance(receiver, ast.Name):
+                continue
+            if receiver.id not in {"datetime", "date", "dt", "time"}:
+                continue
+
+            if function.attr in banned:
                 offenders.append(f"{module.name}:{node.lineno}")
+            elif function.attr == "fromtimestamp" and not _has_timezone(node):
+                offenders.append(f"{module.name}:{node.lineno} (fromtimestamp without a tz)")
 
     return offenders
 

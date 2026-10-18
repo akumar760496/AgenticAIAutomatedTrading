@@ -16,7 +16,7 @@ from trading_desk.adapters.clock import SystemClock, to_ist
 from trading_desk.adapters.dhan.chain import DhanOptionChainAdapter
 from trading_desk.adapters.dhan.client import DhanClient
 from trading_desk.adapters.dhan.instruments import DhanInstrumentMaster
-from trading_desk.adapters.dhan.token import StaticTokenProvider
+from trading_desk.adapters.dhan.token_store import StoredTokenProvider, load_token
 from trading_desk.adapters.notify.logging_notifier import LoggingNotifier
 from trading_desk.adapters.store.parquet_chain import SCHEMA, ParquetChainArchive
 from trading_desk.application.calendars import load_trading_calendar
@@ -44,16 +44,25 @@ MAX_PLAUSIBLE_ATM_IV = 100.0
 STALE_PRINT_IV = 200.0
 
 
+def _stored_token_exists() -> bool:
+    """A usable consent-flow grant on disk, the same one the app uses."""
+    try:
+        load_token()
+    except (FileNotFoundError, KeyError, ValueError):
+        return False
+    return True
+
+
 def _live_capture() -> tuple[bool, str]:
     """One real snapshot run of the whole universe."""
     settings = load_dhan_settings()
-    if settings.access_token is None or not settings.access_token.get_secret_value():
-        return False, "no DHAN_ACCESS_TOKEN in .env"
+    if not _stored_token_exists():
+        return False, "no stored Dhan token - run: make login"
 
     clock = SystemClock()
     client = DhanClient(
         client_id=settings.client_id,
-        token_provider=StaticTokenProvider(settings.access_token.get_secret_value()),
+        token_provider=StoredTokenProvider(),
     )
     calendar = load_trading_calendar()
     closed = calendar.reason_closed(to_ist(clock.utc_now()).date())

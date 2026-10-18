@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, time
 from pathlib import Path
 
 import yaml
@@ -21,6 +21,7 @@ from trading_desk.domain.liquidity import (
     LiquidityRanking,
     LiquidityRules,
 )
+from trading_desk.domain.sessions import SessionHours
 from trading_desk.domain.values import Money
 
 MEASURED_ON = date(2026, 10, 16)
@@ -32,6 +33,7 @@ RULES = ExchangeRules(
         min_priced_fraction=0.25,
         max_stocks=25,
     ),
+    session=SessionHours(open_ist=time(9, 15), close_ist=time(15, 30)),
     effective_from=date(2026, 10, 17),
     verified=False,
     source="test",

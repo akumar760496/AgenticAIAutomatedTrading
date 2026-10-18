@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import text
 
 from scripts.verify._runner import CheckResult
@@ -32,6 +34,20 @@ def _extensions() -> tuple[dict[str, str], str]:
         return installed_extensions(engine), ""
     except Exception as error:
         return {}, type(error).__name__
+
+
+def _head_revision() -> str:
+    """The newest revision in alembic/versions, read from the scripts themselves.
+
+    Hardcoding the expected revision here meant this check failed the moment a
+    second migration landed - it was asserting "0001 is applied" when it meant
+    "the database is up to date". Reading the head keeps it true as migrations
+    are added, and still fails when the database is behind.
+    """
+    config = Config(str(ROOT / "alembic.ini"))
+    directory = ScriptDirectory.from_config(config)
+    head = directory.get_current_head()
+    return head or ""
 
 
 def _applied_migrations() -> list[str]:
@@ -66,6 +82,7 @@ def run() -> list[CheckResult]:
     extensions, connect_error = _extensions()
     missing = [name for name in REQUIRED_EXTENSIONS if name not in extensions]
     migrations = _applied_migrations()
+    head = _head_revision()
     no_persistence, persistence_detail = _redis_has_no_persistence()
 
     return [
@@ -101,9 +118,9 @@ def run() -> list[CheckResult]:
         ),
         CheckResult(
             name="migrations_applied",
-            passed=migrations == ["0001"],
-            measured=str(migrations) if migrations else "none",
-            requirement="need ['0001'] (baseline)",
+            passed=migrations == [head],
+            measured=f"{migrations or 'none'}, head is {head or 'unknown'}",
+            requirement="need the database at the head revision",
         ),
         CheckResult(
             name="redis_reachable",

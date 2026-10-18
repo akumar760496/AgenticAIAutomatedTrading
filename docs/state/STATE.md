@@ -8,7 +8,7 @@ in `DEVLOG.md`.
 
 **Updated:** 2026-10-16
 **Phase:** 1 — The data spine (next). **Phase 0 complete.**
-**Active step:** 1.2 built, awaiting a live survey on a trading day — then 1.3
+**Active step:** 1.3a and 1.4 done — next is 1.3b (Dhan websocket), which needs a live session
 **Package name:** `trading_desk` (decided 2026-10-15)
 
 ## Done
@@ -36,7 +36,22 @@ in `DEVLOG.md`.
 
 ## Next action
 
-**Run the first real survey on a trading day:**
+**Monday, in this order:**
+
+```
+uv run trading-desk survey      # ~30 minutes, 218 underlyings
+make verify STEP=1_1b           # the live capture check
+```
+
+(`make login` only if the token has aged out — it was re-issued on the 18th.)
+
+Then **step 1.3b — the Dhan websocket adapter**: subscribe the universe, tick→bar through
+the builder that landed in 1.3a, reconnect with backoff writing a `data_gaps` row, a
+freshness watchdog, and ticks onto Redis. The feed cap is not a constraint (5,000 per
+connection, ISS-001). One thing to settle at the adapter edge: whether Dhan sends
+cumulative day volume or per-trade quantity — `Tick.quantity` requires the latter.
+
+**Detail on the survey:**
 
 ```
 uv run trading-desk survey      # ~30 minutes, 218 underlyings
@@ -69,20 +84,26 @@ a schedule that is started once a day. See ISS-005.
 4. Realistic weekly hours (under 5 → cut to index-only, `docs/10` §7)
 5. Decision-capture mechanism confirmation (`docs/11` §1.2)
 
-## Verification sweep — 2026-10-17
+## Verification sweep — 2026-10-18 (Sunday)
 
 | Step | Result | Note |
 |---|---|---|
 | 0.1 toolchain | PASS 6/6 | |
 | 0.3 config & secrets | PASS 7/7 | |
-| 0.4 value objects | PASS 10/10 | clock check rewritten as an AST walk |
-| 0.5 infrastructure | PASS 8/8 | Postgres + Redis healthy |
-| 0.6 ports & fakes | PASS 6/6 | was undercounting ports; now 10 |
-| 1.1a chain adapter | PASS 5/5 | |
-| 1.1b archive & snapshotter | **7/8** | `live_capture` cannot pass on a non-trading day — re-run Monday |
+| 0.4 value objects | PASS 10/10 | clock check is an AST walk |
+| 0.5 infrastructure | PASS 8/8 | now compares against the head revision |
+| 0.6 ports & fakes | PASS 6/6 | 10 ports, 10 fakes |
+| 1.1a chain adapter | PASS 5/5 | live NIFTY chain, 235 strikes, greeks present |
+| 1.1b archive & snapshotter | **7/8** | `live_capture` needs a trading day |
 | 1.2 universe service | **6/7** | `thresholds_reviewed` needs your sign-off |
+| 1.3a schema & bar builder | PASS 8/8 | |
+| 1.4 historical backfill | PASS 8/8 | 940 daily bars/name; close agrees with the chain spot |
 
-Neither remaining failure is a defect: one needs a trading day, one needs a decision.
+No defects outstanding: one closed market, one decision.
+
+**Token:** re-issued 2026-10-18 16:36 IST, valid 24.0h (expires ~16:36 on the 19th).
+**Delete `DHAN_ACCESS_TOKEN` from `.env`** — nothing reads it any more, and a stale copy
+there is what made the harness authenticate differently from the app.
 
 ## Open risks being watched
 

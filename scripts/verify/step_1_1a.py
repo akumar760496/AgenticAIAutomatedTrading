@@ -21,7 +21,7 @@ from trading_desk.adapters.dhan.client import (
     RateLimiter,
 )
 from trading_desk.adapters.dhan.instruments import DhanInstrumentMaster
-from trading_desk.adapters.dhan.token import StaticTokenProvider
+from trading_desk.adapters.dhan.token_store import StoredTokenProvider, load_token
 from trading_desk.application.universe import load_universe_request, resolve_universe
 from trading_desk.infra.config import load_dhan_settings
 
@@ -33,6 +33,15 @@ EXPECTED_INDEX_LOTS = {"NIFTY": 65, "BANKNIFTY": 30}
 EXPECTED_INDEX_COUNT = 2
 MIN_STRIKES_IN_A_REAL_CHAIN = 10
 SPACING_TOLERANCE_SECONDS = 0.01
+
+
+def _stored_token_exists() -> bool:
+    """A usable consent-flow grant on disk. Run `make login` if this is False."""
+    try:
+        load_token()
+    except (FileNotFoundError, KeyError, ValueError):
+        return False
+    return True
 
 
 def _rate_limiter_spaces_calls() -> tuple[bool, str]:
@@ -47,10 +56,17 @@ def _rate_limiter_spaces_calls() -> tuple[bool, str]:
 
 
 def _live_chain_check() -> tuple[bool, str]:
-    """Call Dhan for a real NIFTY chain. Fails - never skips - without a token."""
+    """Call Dhan for a real NIFTY chain. Fails - never skips - without a token.
+
+    Uses StoredTokenProvider, the same path the application uses. It previously
+    read DHAN_ACCESS_TOKEN from .env, which diverged the moment the consent flow
+    landed in 1.1c: the harness kept authenticating with a hand-pasted token while
+    the app used the stored grant. A verification that exercises a different auth
+    path than production is not verifying production.
+    """
     settings = load_dhan_settings()
-    if settings.access_token is None or not settings.access_token.get_secret_value():
-        return False, "no DHAN_ACCESS_TOKEN in .env"
+    if not _stored_token_exists():
+        return False, "no stored Dhan token - run: make login"
 
     catalogue = DhanInstrumentMaster().option_underlyings(SystemClock().utc_now().date())
     universe = resolve_universe(
@@ -60,7 +76,7 @@ def _live_chain_check() -> tuple[bool, str]:
 
     client = DhanClient(
         client_id=settings.client_id,
-        token_provider=StaticTokenProvider(settings.access_token.get_secret_value()),
+        token_provider=StoredTokenProvider(),
     )
     adapter = DhanOptionChainAdapter(client, SystemClock())
 
@@ -116,7 +132,10 @@ def run() -> list[CheckResult]:
             name="rate_limiter_spacing",
             passed=spacing_ok,
             measured=spacing_detail,
-            requirement=f"need >= {OPTION_CHAIN_MIN_INTERVAL_SECONDS}s between calls",
+            requirement=(
+                f"need a {OPTION_CHAIN_MIN_INTERVAL_SECONDS - 1.0}s wait when the previous "
+                f"call was 1s ago, so calls land {OPTION_CHAIN_MIN_INTERVAL_SECONDS}s apart"
+            ),
         ),
         CheckResult(
             name="live_chain_with_greeks",

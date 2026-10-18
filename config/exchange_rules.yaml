@@ -12,6 +12,17 @@ verified: false
 effective_from: 2026-10-17
 source: "starting values, pending review against a real survey"
 
+# NSE equity and F&O session, IST. CLAUDE.md rule 7: an exchange rule is config.
+# These two times decide which bar a tick belongs to, so a wrong value here
+# silently misplaces the first and last candle of every day.
+#
+# Muhurat trading (one evening a year, listed under special_sessions in
+# holidays.yaml) runs different hours and is NOT covered by these values. Nothing
+# reads them for a special session yet; see ISS-008.
+session:
+  open_ist: "09:15"
+  close_ist: "15:30"
+
 liquidity:
   # Premium turnover = last price x volume, summed over every leg of the nearest
   # expiry. Rupees. A chain below this cannot absorb a position without moving.

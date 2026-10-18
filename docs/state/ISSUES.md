@@ -148,6 +148,21 @@ logged and work continues — no drive-by fixes inside a step.
   of the write.
 - **Status:** closed · **Owner:** me
 
+### ISS-008 — Muhurat session hours are not modelled
+- **Found:** 2026-10-18, step 1.3a
+- **Severity:** low, but silently wrong if it fires
+- **Symptom:** `config/exchange_rules.yaml` carries one session, 09:15-15:30 IST. Muhurat
+  trading - one evening a year, around 18:00-19:00 - runs entirely outside it.
+  `config/holidays.yaml` already lists 2026-11-08 as a special session.
+- **Impact:** every Muhurat tick would be rejected as `outside_session` and that day would
+  produce no bars. The rejections are recorded, so the data is not corrupted and the loss
+  is visible - but nothing currently reads them and nobody would notice on the night.
+- **Why not fixed now:** the exchange publishes Muhurat timings by circular a few weeks
+  ahead, and inventing plausible hours is worse than having none. It needs a
+  `special_session_hours` block keyed by date, filled from the circular.
+- **Due before:** 2026-11-08.
+- **Status:** open · **Owner:** me (needs the NSE circular, same one as the holiday list)
+
 ## Closed
 
 ### ISS-001 — Dhan websocket instrument cap unknown
