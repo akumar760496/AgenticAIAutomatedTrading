@@ -22,6 +22,7 @@ from trading_desk.ports.clock import Clock
 from trading_desk.ports.cycle_store import CycleStore
 from trading_desk.ports.expiry_store import ExpiryStorePort
 from trading_desk.ports.history import HistoricalBarsPort
+from trading_desk.ports.job_log import JobLogPort
 from trading_desk.ports.journal import JournalPort
 from trading_desk.ports.llm import LlmPort
 from trading_desk.ports.llm_ledger import LlmLedger
@@ -36,11 +37,12 @@ TITLE = "Ports and fakes"
 
 ROOT = Path(__file__).resolve().parents[2]
 
-# Nineteen ports, eighteen files: ports/news.py declares both NewsPort and
-# FilingsPort. `CycleStore` was added in 3.4, `ChatPort` in 3.6.
+# Twenty ports, nineteen files: ports/news.py declares both NewsPort and
+# FilingsPort. `CycleStore` was added in 3.4, `ChatPort` in 3.6 and
+# `JobLogPort` in 3.7.
 # Counting files here instead of ports is what let ChainArchivePort go unchecked
 # from step 1.1b until a Phase 0 re-run in step 1.2 found the mismatch.
-EXPECTED_PORT_COUNT = 19
+EXPECTED_PORT_COUNT = 20
 
 # `GovernedLlmPort` (ports/llm.py) is deliberately NOT in this inventory and has
 # no fake. It is not an external dependency - it is the internal seam that lets
@@ -59,6 +61,7 @@ EXPECTED_PORTS = [
     ExpiryStorePort,
     HistoricalBarsPort,
     FilingsPort,
+    JobLogPort,
     JournalPort,
     LlmLedger,
     LlmPort,

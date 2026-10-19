@@ -8,10 +8,13 @@ fixture on disk, and the boundary tests are the point of step 2.3.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from trading_desk.domain.scoring import CreditExitRules, DebitExitRules
 
 DEFAULT_SETUPS_PATH = Path("config/setups.yaml")
 
@@ -49,6 +52,9 @@ class SetupAThresholds:
     expiry: ExpiryWindow
     long_leg_delta: DeltaBand
     short_leg_delta: DeltaBand
+    # How the idea ends. Added in step 3.8: the numbers were in docs/06 and in
+    # no config file, which is how a rulebook number quietly becomes a literal.
+    exits: DebitExitRules
 
 
 @dataclass(frozen=True)
@@ -58,6 +64,8 @@ class SetupBThresholds:
     credit_delta: DeltaBand
     credit_expiry: ExpiryWindow
     debit_expiry: ExpiryWindow
+    credit_exits: CreditExitRules
+    debit_exits: DebitExitRules
     flat_by_sessions_before_expiry: int
     max_concurrent_index_positions: int
     blocking_event_types: frozenset[str]
@@ -104,6 +112,7 @@ def load_setup_thresholds(path: Path = DEFAULT_SETUPS_PATH) -> SetupThresholds:
                 float(a["structure"]["short_leg_delta_min"]),
                 float(a["structure"]["short_leg_delta_max"]),
             ),
+            exits=_debit_exits(a["exits"]),
         ),
         setup_b=SetupBThresholds(
             credit_regime_min_iv_rank=float(b["credit_regime_min_iv_rank"]),
@@ -118,6 +127,13 @@ def load_setup_thresholds(path: Path = DEFAULT_SETUPS_PATH) -> SetupThresholds:
             debit_expiry=ExpiryWindow(
                 int(b["debit"]["min_days_to_expiry"]), int(b["debit"]["max_days_to_expiry"])
             ),
+            credit_exits=CreditExitRules(
+                target_fraction_of_credit_captured=_fraction(
+                    b["credit_exits"]["target_fraction_of_credit_captured"]
+                ),
+                stop_multiple_of_credit=_fraction(b["credit_exits"]["stop_multiple_of_credit"]),
+            ),
+            debit_exits=_debit_exits(b["debit_exits"]),
             flat_by_sessions_before_expiry=int(b["flat_by_sessions_before_expiry"]),
             max_concurrent_index_positions=int(b["max_concurrent_index_positions"]),
             blocking_event_types=frozenset(str(item).upper() for item in b["blocking_event_types"]),
@@ -125,4 +141,25 @@ def load_setup_thresholds(path: Path = DEFAULT_SETUPS_PATH) -> SetupThresholds:
         allow_naked_shorts=bool(raw.get("allow_naked_shorts", False)),
         verified=bool(raw.get("verified", False)),
         source=str(raw.get("source", "")),
+    )
+
+
+def _fraction(value: Any) -> Decimal:
+    """A YAML number as a Decimal, via str.
+
+    `Decimal(0.6)` is 0.59999999999999997779553950749686919152736663818359375.
+    `Decimal(str(0.6))` is 0.6. Costs and P&L are computed from these, so the
+    route through `str` is not pedantry (rule 4).
+    """
+    return Decimal(str(value))
+
+
+def _debit_exits(raw: dict[str, Any]) -> DebitExitRules:
+    """Shared by Setup A and Setup B's debit variant - the same three numbers."""
+    return DebitExitRules(
+        target_fraction_of_width=_fraction(raw["target_fraction_of_width"]),
+        stop_fraction_of_debit_lost=_fraction(raw["stop_fraction_of_debit_lost"]),
+        # Required, not defaulted. A missing time stop defaulting to 0 would
+        # mean "flat on expiry day", which is the one thing docs/06 forbids.
+        time_stop_days_to_expiry=int(raw["time_stop_days_to_expiry"]),
     )

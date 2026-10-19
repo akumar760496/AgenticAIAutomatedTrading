@@ -7,6 +7,7 @@
     uv run trading-desk brief      # run one research cycle and send the briefing
     uv run trading-desk capture    # record decisions waiting in Telegram
     uv run trading-desk nag        # chase unanswered ideas (after 10:00 IST)
+    uv run trading-desk review     # where every open idea stands at the close
     uv run trading-desk telegram-check   # prove delivery before 08:15 depends on it
 
 Starting the app authenticates it. A browser opens only when there is no usable
@@ -27,10 +28,10 @@ from __future__ import annotations
 
 import logging
 import sys
+from collections.abc import Callable
+from pathlib import Path
 
-from apscheduler.schedulers.blocking import BlockingScheduler
-from apscheduler.triggers.cron import CronTrigger
-
+from trading_desk.adapters.backup.postgres_dump import PostgresBackupTool
 from trading_desk.adapters.clock import IST, SystemClock
 from trading_desk.adapters.dhan.chain import DhanOptionChainAdapter
 from trading_desk.adapters.dhan.client import DhanClient
@@ -38,10 +39,16 @@ from trading_desk.adapters.dhan.instruments import DhanInstrumentMaster
 from trading_desk.adapters.dhan.login import ensure_valid_token, hours_remaining
 from trading_desk.adapters.dhan.token_store import StoredTokenProvider
 from trading_desk.adapters.notify.logging_notifier import LoggingNotifier
+from trading_desk.adapters.store.expiry_repository import PostgresExpiryStore
+from trading_desk.adapters.store.jsonl_job_log import JsonlJobLog
 from trading_desk.adapters.store.news_repository import PostgresNewsStore
 from trading_desk.adapters.store.parquet_chain import ParquetChainArchive
+from trading_desk.adapters.telegram.client import TelegramClient
+from trading_desk.adapters.telegram.notifier import TelegramNotifier
+from trading_desk.application.backup import BackupService
 from trading_desk.application.calendars import TradingCalendar, load_trading_calendar
 from trading_desk.application.exchange_rules import load_exchange_rules
+from trading_desk.application.expiry_refresh import ExpiryRefresh
 from trading_desk.application.label_set import (
     DEFAULT_LABEL_PATH,
     DEFAULT_SAMPLE_SIZE,
@@ -50,6 +57,23 @@ from trading_desk.application.label_set import (
     write_sample,
 )
 from trading_desk.application.liquidity_survey import LiquiditySurvey
+from trading_desk.application.scheduler import (
+    BACKUP,
+    BRIEF,
+    CALIBRATION,
+    CAPTURE,
+    CAPTURE_INTERVAL_SECONDS,
+    EXPIRY_REFRESH,
+    HEALTH,
+    NAG,
+    REVIEW,
+    SCORE,
+    SNAPSHOT,
+    DailyJob,
+    JobGuard,
+    PollingJob,
+    build_scheduler,
+)
 from trading_desk.application.snapshotter import ChainSnapshotter
 from trading_desk.application.universe import load_universe_request, resolve_universe
 from trading_desk.application.universe_builder import (
@@ -71,8 +95,12 @@ from trading_desk.infra.db import create_db_engine, create_session_factory
 from trading_desk.infra.logging import configure_logging, register_secret
 from trading_desk.interfaces.briefing_cli import (
     run_briefing,
+    run_calibration,
     run_capture_once,
+    run_health,
     run_nag,
+    run_review,
+    run_scoring,
     run_telegram_check,
 )
 from trading_desk.ports.notifier import AlertLevel
@@ -81,6 +109,10 @@ from trading_desk.ports.notifier import AlertLevel
 # has a shape rather than a single daily point. A full run takes about four
 # minutes at Dhan's rate limit, hence 15:15 rather than closer to 15:30.
 SNAPSHOT_TIMES_IST = [(9, 30), (12, 30), (15, 15)]
+
+# The nightly backup, as `scripts/backup.py` spells it.
+BACKUP_DATABASE = "trading_desk"
+CHAIN_ARCHIVE_ROOT = Path("data/chains")
 
 log = logging.getLogger("trading_desk.app")
 
@@ -129,11 +161,127 @@ def _run_capture() -> int:
     return 0 if health.is_complete else 1
 
 
-def _start_scheduler() -> int:
-    """Authenticate once, then capture on schedule until stopped."""
+def _daily_jobs() -> list[DailyJob]:
+    """The timetable, IST. One place, so it can be read in ten seconds.
+
+    Ordered by time of day rather than by importance, because that is the
+    order it will be debugged in.
+    """
+    jobs = [
+        DailyJob(name=BRIEF, hour=8, minute=15, run=_job(run_briefing)),
+        DailyJob(name=NAG, hour=10, minute=0, run=_job(run_nag)),
+        DailyJob(name=REVIEW, hour=15, minute=45, run=_job(run_review)),
+        # Scoring after the review, health after scoring. The order is the
+        # dependency: the review reports, scoring writes the outcome rows, and
+        # the no-trade rate is measured once the day's result is in the journal.
+        DailyJob(name=SCORE, hour=16, minute=0, run=_job(run_scoring)),
+        DailyJob(name=HEALTH, hour=16, minute=15, run=_job(run_health)),
+        # Nightly, and not trading-day gated: the expiry list and the backup
+        # are about our own state, not the market's.
+        DailyJob(
+            name=EXPIRY_REFRESH,
+            hour=20,
+            minute=0,
+            run=_job(_refresh_expiries),
+            trading_days_only=False,
+        ),
+        DailyJob(name=BACKUP, hour=23, minute=30, run=_job(_take_backup), trading_days_only=False),
+        # Calibration is cheap and reads the whole history, so it runs daily
+        # rather than monthly as FR-7.7 allows. A monthly report that nobody
+        # has seen for four weeks is how a broken Brier score survives.
+        DailyJob(
+            name=CALIBRATION,
+            hour=21,
+            minute=0,
+            run=_job(run_calibration),
+            trading_days_only=False,
+        ),
+    ]
+    for hour, minute in SNAPSHOT_TIMES_IST:
+        jobs.append(
+            DailyJob(
+                name=f"{SNAPSHOT}_{hour:02d}{minute:02d}",
+                hour=hour,
+                minute=minute,
+                run=_job(_run_capture),
+            )
+        )
+    return jobs
+
+
+def _job(command: Callable[[], int]) -> Callable[[], None]:
+    """A command as a job.
+
+    Every command returns an exit code; the guard reacts to exceptions. A
+    non-zero code means the work ran and found something wrong - a partial
+    capture, say - and that has already been logged and alerted by the command
+    itself. Raising here would double-report it as a scheduler failure and
+    break the unattended-session streak over a single missing chain.
+    """
+
+    def run() -> None:
+        code = command()
+        if code != 0:
+            log.warning("job returned exit code %d", code)
+
+    return run
+
+
+def _refresh_expiries() -> int:
+    """Re-read every underlying's expiry list and audit the holiday calendar.
+
+    Nightly rather than per-capture because an expiry list changes when the
+    exchange publishes a circular, not when a price moves. The audit is the
+    valuable half: a Tuesday the exchange skipped is primary evidence of a
+    holiday our own `config/holidays.yaml` does not list, and that is how
+    2026-11-24 was found (step 1.8).
+    """
     clock = SystemClock()
     settings = load_dhan_settings()
     calendar = load_trading_calendar()
+    today = clock.utc_now().astimezone(IST).date()
+
+    ensure_valid_token(settings)
+    client = DhanClient(client_id=settings.client_id, token_provider=StoredTokenProvider())
+    factory = create_session_factory(create_db_engine(load_infra_settings()))
+
+    try:
+        catalogue = DhanInstrumentMaster().option_underlyings(today)
+        universe = resolve_universe(load_universe_request(), catalogue)
+        report = ExpiryRefresh(
+            chain_source=DhanOptionChainAdapter(client, clock),
+            store=PostgresExpiryStore(factory),
+            notifier=LoggingNotifier(clock),
+            clock=clock,
+        ).run(list(universe.all_instruments()), calendar)
+    finally:
+        client.close()
+
+    log.info("%s", report.summary())
+    return 0 if not report.failed else 1
+
+
+def _take_backup() -> int:
+    """The nightly dump plus a chain-archive digest. Same code as `make backup`."""
+    clock = SystemClock()
+    report = BackupService(
+        tool=PostgresBackupTool(user=BACKUP_DATABASE),
+        clock=clock,
+        notifier=LoggingNotifier(clock),
+        database=BACKUP_DATABASE,
+        archive_root=CHAIN_ARCHIVE_ROOT,
+    ).run()
+
+    log.info("%s", report.summary())
+    return 0
+
+
+def _start_scheduler() -> int:
+    """Authenticate once, then run the whole timetable until stopped."""
+    clock = SystemClock()
+    settings = load_dhan_settings()
+    calendar = load_trading_calendar()
+    register_secret(load_telegram_settings().bot_token)
 
     grant = ensure_valid_token(settings)
     log.info("Authenticated. Token valid for %.1f hours.", hours_remaining(grant))
@@ -144,24 +292,47 @@ def _start_scheduler() -> int:
             "Holiday calendar is unverified - check config/holidays.yaml against the NSE circular",
         )
 
-    scheduler = BlockingScheduler(timezone=IST)
-    for hour, minute in SNAPSHOT_TIMES_IST:
-        scheduler.add_job(
-            _run_capture,
-            CronTrigger(day_of_week="mon-fri", hour=hour, minute=minute, timezone=IST),
-            id=f"snapshot_{hour:02d}{minute:02d}",
-            misfire_grace_time=600,  # a laptop waking late should still capture
-            coalesce=True,  # one run, not a backlog, after a long sleep
-        )
+    # The alerting notifier is Telegram, because an unattended scheduler whose
+    # failures only reach a log file on a sleeping laptop is not alerting.
+    telegram = TelegramClient(
+        bot_token=load_telegram_settings().bot_token.get_secret_value(),
+        chat_id=load_telegram_settings().chat_id,
+    )
+    guard = JobGuard(
+        calendar=calendar,
+        clock=clock,
+        notifier=TelegramNotifier(telegram, clock),
+        job_log=JsonlJobLog(),
+    )
 
-    times = ", ".join(f"{hour:02d}:{minute:02d}" for hour, minute in SNAPSHOT_TIMES_IST)
-    log.info("Scheduled captures (IST, Mon-Fri, skipping holidays): %s", times)
+    daily = _daily_jobs()
+    scheduler = build_scheduler(
+        guard=guard,
+        daily=daily,
+        polling=[
+            PollingJob(
+                name=CAPTURE,
+                every_seconds=CAPTURE_INTERVAL_SECONDS,
+                run=_job(run_capture_once),
+                # Not trading-day gated: a briefing sent on Friday is often
+                # answered on Saturday, and a tap nobody collects is a
+                # decision lost.
+                trading_days_only=False,
+            )
+        ],
+    )
+
+    for job in sorted(daily, key=lambda item: (item.hour, item.minute)):
+        log.info("  %02d:%02d IST  %s", job.hour, job.minute, job.name)
+    log.info("  every %ds  %s", CAPTURE_INTERVAL_SECONDS, CAPTURE)
     log.info("Running. Ctrl-C to stop.")
 
     try:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):
         log.info("Stopped.")
+    finally:
+        telegram.close()
     return 0
 
 
@@ -285,18 +456,23 @@ def _write_label_sheet() -> int:
 
 
 # Commands that talk to the chat and the database, and never to the broker.
-CHAT_COMMANDS = ("telegram-check", "capture", "nag")
+# A table rather than an if-chain: at seven entries the chain stopped being
+# easier to read than the thing it was avoiding.
+CHAT_COMMANDS: dict[str, Callable[[], int]] = {
+    "telegram-check": run_telegram_check,
+    "capture": run_capture_once,
+    "nag": run_nag,
+    "review": run_review,
+    "score": run_scoring,
+    "calibration": run_calibration,
+    "health": run_health,
+}
 
 
 def _run_chat_command(command: str) -> int:
     """Telegram-only commands. No Dhan credentials are loaded or needed."""
-    telegram = load_telegram_settings()
-    register_secret(telegram.bot_token)
-    if command == "telegram-check":
-        return run_telegram_check()
-    if command == "capture":
-        return run_capture_once()
-    return run_nag()
+    register_secret(load_telegram_settings().bot_token)
+    return CHAT_COMMANDS[command]()
 
 
 def _run_brief() -> int:
@@ -343,7 +519,8 @@ def main() -> int:
     print(f"Unknown command: {command}", file=sys.stderr)
     print(
         "Usage: trading-desk "
-        "[run|snapshot|login|survey|label-news|brief|capture|nag|telegram-check]",
+        "[run|snapshot|login|survey|label-news|brief|capture|nag|review|score|"
+        "calibration|health|telegram-check]",
         file=sys.stderr,
     )
     return 2

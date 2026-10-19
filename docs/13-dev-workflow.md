@@ -23,8 +23,8 @@ The fix is to separate content by **how often it changes and how often it is nee
 | Rules that always apply | `CLAUDE.md` (94 lines) | Rarely | Automatically, every request |
 | Task procedures | `.claude/skills/*/SKILL.md` | Rarely | Only when the task matches |
 | Where we are now | `docs/state/STATE.md` (~40 lines) | Every session, **rewritten** | At session start |
-| Why things are as they are | `docs/state/DEVLOG.md` | Appended, monthly rollup | Grepped, or `tail` |
-| What's broken | `docs/state/ISSUES.md` | As found | Open section only |
+| Why things are as they are | `docs/state/DEVLOG.md` | Appended, rolled up per phase | Grepped, or `tail` |
+| What's broken | `docs/state/ISSUES.md` | As found | Open **index** only |
 | Evidence a step works | `VERIFICATION.md` | On step completion | Grepped |
 
 Same information, same dynamism — but a request pays only for what it needs. **`CLAUDE.md`
@@ -93,12 +93,19 @@ What goes in is strictly **decisions and surprises** — not what the code does,
 code says that better. The test for an entry: *would a session three months from now
 re-argue this if it weren't written down?*
 
-**The rollup policy is the part that keeps it honest.** At each month end, a ≤10-line
-summary replaces that month's entries, which move to `DEVLOG-ARCHIVE.md`. Without this, the
+**The rollup policy is the part that keeps it honest.** When a phase completes, a ≤10-line
+summary replaces that phase's entries, which move to `DEVLOG-ARCHIVE.md`. Without this, the
 file meant to save tokens becomes the thing that costs them — the exact failure the split
-in §1 exists to prevent.
+in §1 exists to prevent. The policy originally said "each month end"; phases 0–2 all closed
+inside five days, so the month was the wrong unit and the file reached 134 KB before the
+first rollup was due.
 
-### `ISSUES.md` — open items read every session
+### `ISSUES.md` — an index read every session, detail read on demand
+
+The file opens with a one-line-per-issue table. A session reads the table; it opens an
+individual `### ISS-` section only when that issue is the one being worked on. Twenty-two
+open issues at ~20 lines each is ~500 lines a session for information that is almost always
+answered by the one-liner. Closed issues live in `ISSUES-ARCHIVE.md`.
 
 Each issue carries symptom, hypothesis, and — the field that matters — **impact on a
 trading decision**. "Volume is 8% high" is a bug; "the volume gate would produce false

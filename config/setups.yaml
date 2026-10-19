@@ -58,6 +58,21 @@ setup_a:
     short_leg_delta_min: 0.25
     short_leg_delta_max: 0.30
 
+  # How the idea ends, from docs/06 section 2. These are the numbers step 3.8
+  # scores against, and they are fractions of the *spread*, not levels on the
+  # underlying — a point worth stating because the 15:45 review reports the
+  # underlying's position against its stop and target, which is a different
+  # question from whether the trade is over.
+  exits:
+    # Target: 60% of the spread's width captured. A debit vertical cannot earn
+    # more than the width, so this is a fraction of the maximum, not of the cost.
+    target_fraction_of_width: 0.60
+    # Stop: half the debit paid is gone.
+    stop_fraction_of_debit_lost: 0.50
+    # Time stop: flat when this few days to expiry remain. Not "five days held" —
+    # it is five days *to expiry*, so a 25-day contract runs for twenty.
+    time_stop_days_to_expiry: 5
+
 setup_b:
   # Three bands, and the middle one is a no-trade. docs/06 calls that "a valid
   # and frequent output" — it is the most common answer, and the easiest thing
@@ -74,6 +89,22 @@ setup_b:
   debit:
     min_days_to_expiry: 10
     max_days_to_expiry: 20
+
+  # How each variant ends, from docs/06 section 2's table. The credit variant's
+  # numbers are fractions of the credit received, which is why they are not
+  # shared with Setup A: "50% captured" and "50% of the debit lost" are opposite
+  # signs of the same idea and collapsing them into one field is how a credit
+  # spread ends up scored as a debit one.
+  credit_exits:
+    target_fraction_of_credit_captured: 0.50
+    stop_multiple_of_credit: 2.0
+  debit_exits:
+    target_fraction_of_width: 0.60
+    stop_fraction_of_debit_lost: 0.50
+    # One, not five: an index debit spread runs to the session before expiry,
+    # per flat_by_sessions_before_expiry below. Setup A's five days are a stock
+    # monthly-expiry rule and do not transfer.
+    time_stop_days_to_expiry: 1
 
   # No position is held into expiry day. Expiry-day gamma is how defined-risk
   # positions stop being defined-risk in practice.

@@ -23,7 +23,9 @@ from pathlib import Path
 import polars as pl
 
 from trading_desk.adapters.clock import to_ist
+from trading_desk.domain.enums import OptionRight
 from trading_desk.domain.market import OptionChainSnapshot
+from trading_desk.domain.values import Money, Price
 from trading_desk.domain.vol import combine_atm_iv
 
 DEFAULT_ARCHIVE_ROOT = Path("data/chains")
@@ -102,6 +104,28 @@ class ParquetChainArchive:
             series.append((date.fromisoformat(day_dir.name.removeprefix("date=")), value))
         return series
 
+    def premium_on(
+        self,
+        *,
+        underlying: str,
+        on_date: date,
+        expiry: date,
+        strike: Price,
+        right: OptionRight,
+    ) -> Money | None:
+        """The mid of bid and ask for one leg, from that day's last snapshot.
+
+        The last snapshot of the day for the same reason `atm_iv_series` uses
+        it: it is the reading closest to the close. Averaging the day's three
+        would make the number depend on how many captures happened to succeed.
+        """
+        directory = self._root / f"date={on_date.isoformat()}" / f"underlying={underlying}"
+        files = sorted(directory.glob("snapshot_*.parquet"))
+        if not files:
+            return None
+
+        return _mid_for_leg(files[-1], expiry=expiry, strike_paise=strike.paise, right=str(right))
+
     def _path_for(self, snapshot: OptionChainSnapshot) -> Path:
         # Partitioned by IST, because a trading day is an IST concept. Using UTC
         # would be correct during market hours and confusing everywhere else:
@@ -171,3 +195,36 @@ def _atm_iv_for_file(path: Path) -> float | None:
         return None if value is None else float(value)
 
     return combine_atm_iv(side("CALL"), side("PUT"))
+
+
+def _mid_for_leg(path: Path, *, expiry: date, strike_paise: int, right: str) -> Money | None:
+    """One leg's bid-ask mid from one snapshot file, or None if it is not there.
+
+    Returns None rather than zero for every absence - a missing file, a missing
+    strike, a strike quoted with no bid. A zero premium would make a long leg
+    look worthless and a short one look free, and both errors flatter the P&L
+    (rule 6).
+    """
+    frame = pl.read_parquet(path)
+    if frame.is_empty():
+        return None
+
+    leg = frame.filter(
+        (pl.col("expiry") == expiry.isoformat())
+        & (pl.col("strike_paise") == strike_paise)
+        & (pl.col("right") == right)
+    )
+    if leg.is_empty():
+        return None
+
+    bid = leg["bid_paise"][0]
+    ask = leg["ask_paise"][0]
+    if bid is None or ask is None or bid <= 0 or ask <= 0:
+        # A one-sided quote has no mid. Using whichever side exists would be a
+        # systematic bias in a direction that depends on the leg's action.
+        return None
+
+    # Rounded down by integer division, consistently. A half-paise is not a
+    # price anyone can trade, and rounding the same way every time keeps a
+    # round trip from gaining a paise out of nowhere.
+    return Money(paise=(int(bid) + int(ask)) // 2)

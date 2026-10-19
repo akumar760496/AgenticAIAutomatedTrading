@@ -8,6 +8,7 @@ from the broker.
     trading-desk brief            # run a cycle and send it
     trading-desk capture          # record whatever is waiting in the chat
     trading-desk nag              # chase anything unanswered after 10:00
+    trading-desk review           # where every open idea stands at the close
 
 **The cursor lives in a file.** Telegram forgets an update once it has been
 acknowledged by asking for a later one, so the only state that must survive a
@@ -24,6 +25,8 @@ from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
 
+from sqlalchemy.orm import Session, sessionmaker
+
 from trading_desk.adapters.broker.unlinked import NOT_LINKED, UnlinkedBroker
 from trading_desk.adapters.clock import SystemClock
 from trading_desk.adapters.dhan.chain import DhanOptionChainAdapter
@@ -32,11 +35,14 @@ from trading_desk.adapters.dhan.instruments import DhanInstrumentMaster
 from trading_desk.adapters.dhan.login import ensure_valid_token
 from trading_desk.adapters.dhan.token_store import StoredTokenProvider
 from trading_desk.adapters.llm.anthropic_client import AnthropicLlm
+from trading_desk.adapters.notify.logging_notifier import LoggingNotifier
 from trading_desk.adapters.store.bar_repository import PostgresBarStore
 from trading_desk.adapters.store.cycle_store import PostgresCycleStore
 from trading_desk.adapters.store.journal import PostgresJournal
+from trading_desk.adapters.store.jsonl_job_log import JsonlJobLog
 from trading_desk.adapters.store.llm_ledger import PostgresLlmLedger
 from trading_desk.adapters.store.news_repository import PostgresNewsStore
+from trading_desk.adapters.store.parquet_chain import ParquetChainArchive
 from trading_desk.adapters.telegram.chat import TelegramChat
 from trading_desk.adapters.telegram.client import TelegramClient
 from trading_desk.adapters.telegram.notifier import TelegramNotifier
@@ -52,19 +58,30 @@ from trading_desk.agents.strategist.synthesis import SynthesisWriter
 from trading_desk.agents.technical.agent import TechnicalAgent
 from trading_desk.application.briefing import BriefingBuilder, deliver
 from trading_desk.application.calendars import load_trading_calendar
+from trading_desk.application.calibration import CalibrationCycle
+from trading_desk.application.calibration import deliver as deliver_calibration
 from trading_desk.application.decision_capture import DecisionCapture
+from trading_desk.application.health import HealthMonitor
+from trading_desk.application.iv_rank import IvRankService
 from trading_desk.application.llm_governor import CostGovernedLlm
 from trading_desk.application.news_ingest import load_aliases_from_file
 from trading_desk.application.research_cycle import ResearchCycle
+from trading_desk.application.review_cycle import ReviewCycle
+from trading_desk.application.review_cycle import deliver as deliver_review
+from trading_desk.application.scoring import ScoringCycle
+from trading_desk.application.scoring import deliver as deliver_scoring
 from trading_desk.application.universe import load_universe_request, resolve_universe
+from trading_desk.domain.instruments import InstrumentRef
 from trading_desk.domain.setups.thresholds import load_setup_thresholds
 from trading_desk.domain.values import Money
+from trading_desk.domain.vol import IvRank
 from trading_desk.infra.config import (
     load_dhan_settings,
     load_infra_settings,
     load_llm_settings,
     load_telegram_settings,
 )
+from trading_desk.infra.cost_config import load_cost_config
 from trading_desk.infra.db import create_db_engine, create_session_factory
 from trading_desk.infra.llm_pricing import load_llm_pricing
 from trading_desk.infra.risk_config import load_risk_config
@@ -165,14 +182,11 @@ def run_briefing() -> int:
 
 def _run_cycle_and_send(
     clock: SystemClock,
-    factory: object,
+    sessions: sessionmaker[Session],
     governor: CostGovernedLlm,
     cycle_store: PostgresCycleStore,
     dhan_client: DhanClient,
 ) -> int:
-    from sqlalchemy.orm import Session, sessionmaker  # noqa: PLC0415 - typing only
-
-    sessions: sessionmaker[Session] = factory  # type: ignore[assignment]
     today = clock.utc_now().date()
     calendar = load_trading_calendar()
     thresholds = load_setup_thresholds()
@@ -207,14 +221,17 @@ def _run_cycle_and_send(
         journal=journal,
         news_store=news_store,
         clock=clock,
+        # So every briefed leg's entry premium is recorded (migration 0009).
+        # Without it an idea is briefed with no legs and can never be scored.
+        chains=ParquetChainArchive(),
     )
 
+    instruments = tuple(universe.all_instruments())
+    iv_ranks = _iv_ranks(sessions, instruments)
+
     request = cycle.build_request(
-        universe=tuple(universe.all_instruments()),
-        # No IV rank is supplied here: `application.iv_rank` needs the chain
-        # archive, and wiring it is step 3.7's job when the cycle is scheduled.
-        # Until then every idea dies at the volatility gate, visibly.
-        iv_ranks={},
+        universe=instruments,
+        iv_ranks=iv_ranks,
         holidays=calendar.holidays,
         cycle_id=uuid4(),
     )
@@ -230,7 +247,9 @@ def _run_cycle_and_send(
         )
     )
 
-    briefing = BriefingBuilder(load_risk_config(), journal).build(output)
+    briefing = BriefingBuilder(load_risk_config(), journal).build(
+        output, index_iv_rank=_index_rank(iv_ranks, request_config.index_symbols)
+    )
     telegram = _telegram()
     try:
         receipts = deliver(briefing, TelegramNotifier(telegram, clock))
@@ -244,6 +263,129 @@ def _run_cycle_and_send(
         output.costs.total,
     )
     return 0
+
+
+def _iv_ranks(
+    sessions: sessionmaker[Session], instruments: tuple[InstrumentRef, ...]
+) -> dict[str, IvRank]:
+    """An IV rank per symbol, actual where our chain history reaches, proxy otherwise.
+
+    The service is given a `LoggingNotifier`, not the Telegram one, on purpose.
+    It alerts on every run about how many values are proxies, and until roughly
+    six months of chain history has accrued that is *every* value - so wiring
+    it to Telegram would send the same warning every morning until it was
+    muted, which is how real alerts get muted too. The provenance is not lost:
+    each idea in the briefing carries "(proxy)" next to its own iv_rank, which
+    is where it matters.
+    """
+    service = IvRankService(
+        archive=ParquetChainArchive(),
+        bars=PostgresBarStore(sessions),
+        notifier=LoggingNotifier(SystemClock()),
+    )
+    return service.run([instrument.symbol for instrument in instruments]).ranks
+
+
+def _index_rank(ranks: dict[str, IvRank], index_symbols: tuple[str, ...]) -> IvRank | None:
+    """The market-view line's IV rank: the first index that has one."""
+    for symbol in index_symbols:
+        rank = ranks.get(symbol)
+        if rank is not None and rank.is_available:
+            return rank
+    return None
+
+
+def run_review() -> int:
+    """Where every open idea stands at the close. The 15:45 job."""
+    clock = SystemClock()
+    factory = create_session_factory(create_db_engine(load_infra_settings()))
+    review = ReviewCycle(
+        journal=PostgresJournal(factory, clock),
+        bars=PostgresBarStore(factory),
+        clock=clock,
+    ).run()
+
+    telegram = _telegram()
+    try:
+        deliver_review(review, TelegramNotifier(telegram, clock))
+    finally:
+        telegram.close()
+
+    log.info(
+        "Review delivered: %d open idea(s), %d ready to resolve, %d undecided",
+        len(review.reviews),
+        review.ready_to_resolve,
+        review.undecided,
+    )
+    return 0
+
+
+def run_scoring() -> int:
+    """Resolve and score whatever finished today. The 16:00 job."""
+    clock = SystemClock()
+    factory = create_session_factory(create_db_engine(load_infra_settings()))
+    report = ScoringCycle(
+        journal=PostgresJournal(factory, clock),
+        chains=ParquetChainArchive(),
+        clock=clock,
+        thresholds=load_setup_thresholds(),
+        costs=load_cost_config(),
+    ).run()
+
+    telegram = _telegram()
+    try:
+        deliver_scoring(report, TelegramNotifier(telegram, clock))
+    finally:
+        telegram.close()
+
+    log.info(
+        "Scoring delivered: %d scored, %d still open, %d unscoreable",
+        len(report.scored),
+        report.still_open,
+        len(report.unscoreable),
+    )
+    # Unscoreable ideas are a non-zero exit: the work ran and found something
+    # wrong, which `_job` logs without breaking the unattended-session streak.
+    return 1 if report.unscoreable else 0
+
+
+def run_calibration() -> int:
+    """Is the confidence worth anything? Recorded, and reported."""
+    clock = SystemClock()
+    factory = create_session_factory(create_db_engine(load_infra_settings()))
+    report = CalibrationCycle(
+        journal=PostgresJournal(factory, clock),
+        clock=clock,
+    ).run()
+
+    telegram = _telegram()
+    try:
+        deliver_calibration(report, TelegramNotifier(telegram, clock))
+    finally:
+        telegram.close()
+
+    log.info("Calibration: sizing lock %s", report.lock.describe())
+    return 0
+
+
+def run_health() -> int:
+    """The no-trade rate and engagement. Alerts outside the 40-60% band."""
+    clock = SystemClock()
+    factory = create_session_factory(create_db_engine(load_infra_settings()))
+
+    telegram = _telegram()
+    try:
+        report = HealthMonitor(
+            journal=PostgresJournal(factory, clock),
+            job_log=JsonlJobLog(),
+            clock=clock,
+            notifier=TelegramNotifier(telegram, clock),
+        ).run()
+    finally:
+        telegram.close()
+
+    log.info("Health: %s", report.no_trade.describe())
+    return 1 if report.needs_alert else 0
 
 
 def _read_cursor() -> int:

@@ -18,6 +18,7 @@ from tests.fakes.clock import FrozenClock
 from tests.fakes.cycle_store import FakeCycleStore
 from tests.fakes.expiry_store import FakeExpiryStore
 from tests.fakes.history import FakeHistory
+from tests.fakes.job_log import FakeJobLog
 from tests.fakes.journal import FakeJournal
 from tests.fakes.llm import FakeLlm
 from tests.fakes.llm_ledger import FakeLlmLedger
@@ -38,6 +39,7 @@ __all__ = [
     "FakeExpiryStore",
     "FakeFilings",
     "FakeHistory",
+    "FakeJobLog",
     "FakeJournal",
     "FakeLlm",
     "FakeLlmLedger",

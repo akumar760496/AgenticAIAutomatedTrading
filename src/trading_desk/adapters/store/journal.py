@@ -19,23 +19,28 @@ this class. If this adapter is ever wrong, the database still refuses.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from collections.abc import Sequence
+from dataclasses import replace
+from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
-from trading_desk.domain.enums import Direction
-from trading_desk.domain.values import Money
+from trading_desk.domain.enums import Direction, OptionRight
+from trading_desk.domain.proposals import LegAction
+from trading_desk.domain.values import Money, Price
 from trading_desk.infra.db import session_scope
 from trading_desk.ports.clock import Clock
 from trading_desk.ports.journal import (
     CalibrationSnapshot,
     RecordedDecision,
     RecordedIdea,
+    RecordedLeg,
     RecordedOutcome,
     RecordedOverride,
+    ResolvedScore,
 )
 
 INSERT_IDEA = text(
@@ -43,12 +48,39 @@ INSERT_IDEA = text(
     INSERT INTO briefing_ideas (
         idea_id, cycle_id, symbol, setup_id, direction, structure, rank,
         confidence, gate_values, hypothetical_risk_paise, invalidation,
-        agent_rationale, used_iv_proxy, created_at
+        agent_rationale, used_iv_proxy, created_at,
+        stop_level_paise, target_level_paise, expiry_date
     ) VALUES (
         :idea_id, :cycle_id, :symbol, :setup_id, :direction, :structure, :rank,
         :confidence, cast(:gate_values as jsonb), :hypothetical_risk_paise,
-        :invalidation, :agent_rationale, :used_iv_proxy, :created_at
+        :invalidation, :agent_rationale, :used_iv_proxy, :created_at,
+        :stop_level_paise, :target_level_paise, :expiry_date
     )
+    """
+)
+
+INSERT_LEG = text(
+    """
+    INSERT INTO briefing_idea_legs (
+        idea_id, leg_index, option_right, action, strike_paise, expiry_date,
+        entry_premium_paise, recorded_at
+    ) VALUES (
+        :idea_id, :leg_index, :option_right, :action, :strike_paise, :expiry_date,
+        :entry_premium_paise, :recorded_at
+    )
+    """
+)
+
+# Legs for a set of ideas, in briefing order. One query for the whole page
+# rather than one per idea: a vertical has two legs and a page has fifty ideas,
+# which is a hundred round trips to avoid.
+SELECT_LEGS = text(
+    """
+    SELECT idea_id, leg_index, option_right, action, strike_paise, expiry_date,
+           entry_premium_paise
+    FROM briefing_idea_legs
+    WHERE idea_id = ANY(:idea_ids)
+    ORDER BY idea_id, leg_index
     """
 )
 
@@ -66,11 +98,55 @@ INSERT_OUTCOME = text(
     """
     INSERT INTO outcomes (
         idea_id, resolution, hypothetical_pnl_paise, actual_pnl_paise,
-        max_adverse_excursion_paise, resolved_at, recorded_at
+        max_adverse_excursion_paise, resolved_at, recorded_at,
+        basis, gross_pnl_paise, costs_paise, measured, threshold
     ) VALUES (
         :idea_id, :resolution, :hypothetical_pnl_paise, :actual_pnl_paise,
-        :max_adverse_excursion_paise, :resolved_at, :recorded_at
+        :max_adverse_excursion_paise, :resolved_at, :recorded_at,
+        :basis, :gross_pnl_paise, :costs_paise, :measured, :threshold
     )
+    """
+)
+
+# Each idea's latest outcome, joined to the confidence that was claimed for it.
+# DISTINCT ON keeps the newest correction, exactly as SELECT_RESOLVED does - a
+# second outcome row for an idea is a correction, not a second trade.
+SELECT_RESOLVED_SCORES = text(
+    """
+    SELECT DISTINCT ON (o.idea_id)
+           o.idea_id, o.resolution, o.resolved_at,
+           o.hypothetical_pnl_paise, o.gross_pnl_paise, o.costs_paise,
+           i.setup_id, i.confidence, i.used_iv_proxy
+    FROM outcomes o
+    JOIN briefing_ideas i ON i.idea_id = o.idea_id
+    ORDER BY o.idea_id, o.recorded_at DESC, o.outcome_id DESC
+    """
+)
+
+# Distinct IST dates with at least one briefed idea. The AT TIME ZONE cast is
+# the point: created_at is UTC, and a 20:00 UTC briefing is the next IST day.
+# Grouping on the UTC date would put some evenings in the wrong session.
+SELECT_BRIEFED_DATES = text(
+    """
+    SELECT DISTINCT (created_at AT TIME ZONE 'Asia/Kolkata')::date AS ist_date
+    FROM briefing_ideas
+    WHERE created_at >= :since
+    ORDER BY ist_date
+    """
+)
+
+# Briefed, and how many of those have any decision row. One query so the two
+# numbers cannot be read a moment apart and disagree.
+SELECT_ENGAGEMENT = text(
+    """
+    SELECT count(*) AS briefed,
+           count(*) FILTER (
+               WHERE EXISTS (
+                   SELECT 1 FROM user_decisions d WHERE d.idea_id = i.idea_id
+               )
+           ) AS answered
+    FROM briefing_ideas i
+    WHERE created_at >= :since
     """
 )
 
@@ -102,13 +178,32 @@ SELECT_AWAITING = text(
     """
     SELECT idea_id, cycle_id, symbol, setup_id, direction, structure, rank,
            confidence, gate_values, hypothetical_risk_paise, invalidation,
-           agent_rationale, used_iv_proxy, created_at
+           agent_rationale, used_iv_proxy, created_at,
+           stop_level_paise, target_level_paise, expiry_date
     FROM briefing_ideas idea
     WHERE created_at <= :as_of
       AND NOT EXISTS (
           SELECT 1 FROM user_decisions WHERE user_decisions.idea_id = idea.idea_id
       )
     ORDER BY created_at
+    """
+)
+
+# Still running: briefed, and no outcome recorded. A *decided* idea is
+# included on purpose - a taken trade is the one the review most needs.
+SELECT_WITHOUT_OUTCOME = text(
+    """
+    SELECT idea_id, cycle_id, symbol, setup_id, direction, structure, rank,
+           confidence, gate_values, hypothetical_risk_paise, invalidation,
+           agent_rationale, used_iv_proxy, created_at,
+           stop_level_paise, target_level_paise, expiry_date
+    FROM briefing_ideas idea
+    WHERE created_at >= :since
+      AND NOT EXISTS (
+          SELECT 1 FROM outcomes WHERE outcomes.idea_id = idea.idea_id
+      )
+    ORDER BY created_at
+    LIMIT :limit
     """
 )
 
@@ -127,7 +222,8 @@ SELECT_RESOLVED = text(
     """
     SELECT DISTINCT ON (idea_id)
            idea_id, resolution, hypothetical_pnl_paise, actual_pnl_paise,
-           max_adverse_excursion_paise, resolved_at
+           max_adverse_excursion_paise, resolved_at,
+           basis, gross_pnl_paise, costs_paise, measured, threshold
     FROM outcomes
     ORDER BY idea_id, recorded_at DESC, outcome_id DESC
     """
@@ -160,8 +256,29 @@ class PostgresJournal:
                     "agent_rationale": idea.agent_rationale,
                     "used_iv_proxy": idea.used_iv_proxy,
                     "created_at": idea.created_at,
+                    "stop_level_paise": _paise_of(idea.stop_level),
+                    "target_level_paise": _paise_of(idea.target_level),
+                    "expiry_date": idea.expiry,
                 },
             )
+            # Same transaction as the idea. An idea whose legs failed to write
+            # would be silently unscoreable for ever, and the whole point of
+            # 0009 is that the legs exist.
+            recorded_at = self._clock.utc_now()
+            for index, leg in enumerate(idea.legs):
+                session.execute(
+                    INSERT_LEG,
+                    {
+                        "idea_id": idea.idea_id,
+                        "leg_index": index,
+                        "option_right": str(leg.right),
+                        "action": str(leg.action),
+                        "strike_paise": leg.strike.paise,
+                        "expiry_date": leg.expiry,
+                        "entry_premium_paise": leg.entry_premium.paise,
+                        "recorded_at": recorded_at,
+                    },
+                )
 
     def record_decision(self, decision: RecordedDecision) -> None:
         with session_scope(self._factory) as session:
@@ -190,6 +307,11 @@ class PostgresJournal:
                     "max_adverse_excursion_paise": _paise_or_none(outcome.max_adverse_excursion),
                     "resolved_at": outcome.resolved_at,
                     "recorded_at": self._clock.utc_now(),
+                    "basis": outcome.basis,
+                    "gross_pnl_paise": _paise_or_none(outcome.gross_pnl),
+                    "costs_paise": _paise_or_none(outcome.costs),
+                    "measured": outcome.measured,
+                    "threshold": outcome.threshold,
                 },
             )
 
@@ -225,7 +347,36 @@ class PostgresJournal:
     def ideas_awaiting_decision(self, as_of: datetime) -> list[RecordedIdea]:
         with session_scope(self._factory) as session:
             rows = session.execute(SELECT_AWAITING, {"as_of": as_of}).mappings().all()
-        return [_to_idea(row) for row in rows]
+            return self._with_legs(session, rows)
+
+    def ideas_without_outcome(self, since: date, limit: int) -> list[RecordedIdea]:
+        with session_scope(self._factory) as session:
+            rows = (
+                session.execute(SELECT_WITHOUT_OUTCOME, {"since": since, "limit": limit})
+                .mappings()
+                .all()
+            )
+            return self._with_legs(session, rows)
+
+    def _with_legs(self, session: Session, rows: Sequence[Any]) -> list[RecordedIdea]:
+        """Attach each idea's legs. One extra query for the whole page."""
+        ideas = [_to_idea(row) for row in rows]
+        if not ideas:
+            return []
+
+        legs: dict[UUID, list[RecordedLeg]] = {}
+        leg_rows = (
+            session.execute(SELECT_LEGS, {"idea_ids": [idea.idea_id for idea in ideas]})
+            .mappings()
+            .all()
+        )
+        for row in leg_rows:
+            legs.setdefault(row["idea_id"], []).append(_to_leg(row))
+
+        # An idea with no leg rows keeps its empty tuple rather than being
+        # dropped: it is a real idea that predates 0009, and the scoring cycle
+        # reports it as unscoreable instead of pretending it does not exist.
+        return [replace(idea, legs=tuple(legs.get(idea.idea_id, []))) for idea in ideas]
 
     def latest_decision(self, idea_id: UUID) -> RecordedDecision | None:
         with session_scope(self._factory) as session:
@@ -249,6 +400,35 @@ class PostgresJournal:
         outcomes.sort(key=lambda item: item.resolved_at, reverse=True)
         return outcomes[:limit]
 
+    def briefed_dates(self, since: date) -> list[date]:
+        with session_scope(self._factory) as session:
+            rows = session.execute(SELECT_BRIEFED_DATES, {"since": since}).all()
+        return [row[0] for row in rows]
+
+    def engagement_counts(self, since: date) -> tuple[int, int]:
+        with session_scope(self._factory) as session:
+            row = session.execute(SELECT_ENGAGEMENT, {"since": since}).mappings().one()
+        return int(row["briefed"]), int(row["answered"])
+
+    def resolved_scores(self, limit: int) -> list[ResolvedScore]:
+        with session_scope(self._factory) as session:
+            rows = session.execute(SELECT_RESOLVED_SCORES).mappings().all()
+
+        scores = [
+            ResolvedScore(
+                idea_id=row["idea_id"],
+                setup_id=row["setup_id"],
+                confidence=float(row["confidence"]),
+                resolution=row["resolution"],
+                net_pnl=Money(paise=int(row["hypothetical_pnl_paise"])),
+                resolved_at=row["resolved_at"],
+                used_iv_proxy=bool(row["used_iv_proxy"]),
+            )
+            for row in rows
+        ]
+        scores.sort(key=lambda item: item.resolved_at, reverse=True)
+        return scores[:limit]
+
 
 def _as_json(values: dict[str, str]) -> str:
     return json.dumps(values)
@@ -260,6 +440,14 @@ def _paise_or_none(amount: Money | None) -> int | None:
 
 def _money_or_none(paise: int | None) -> Money | None:
     return None if paise is None else Money(paise=int(paise))
+
+
+def _price_or_none(paise: int | None) -> Price | None:
+    return None if paise is None else Price(paise=int(paise))
+
+
+def _paise_of(level: Price | None) -> int | None:
+    return None if level is None else level.paise
 
 
 def _to_idea(row: Any) -> RecordedIdea:
@@ -278,6 +466,19 @@ def _to_idea(row: Any) -> RecordedIdea:
         invalidation=row["invalidation"],
         agent_rationale=row["agent_rationale"],
         used_iv_proxy=row["used_iv_proxy"],
+        stop_level=_price_or_none(row["stop_level_paise"]),
+        target_level=_price_or_none(row["target_level_paise"]),
+        expiry=row["expiry_date"],
+    )
+
+
+def _to_leg(row: Any) -> RecordedLeg:
+    return RecordedLeg(
+        right=OptionRight(row["option_right"]),
+        action=LegAction(row["action"]),
+        strike=Price(paise=int(row["strike_paise"])),
+        expiry=row["expiry_date"],
+        entry_premium=Money(paise=int(row["entry_premium_paise"])),
     )
 
 
@@ -288,5 +489,10 @@ def _to_outcome(row: Any) -> RecordedOutcome:
         hypothetical_pnl=Money(paise=int(row["hypothetical_pnl_paise"])),
         actual_pnl=_money_or_none(row["actual_pnl_paise"]),
         resolved_at=row["resolved_at"],
+        basis=row["basis"],
+        gross_pnl=_money_or_none(row["gross_pnl_paise"]),
+        costs=_money_or_none(row["costs_paise"]),
+        measured=row["measured"],
+        threshold=row["threshold"],
         max_adverse_excursion=_money_or_none(row["max_adverse_excursion_paise"]),
     )

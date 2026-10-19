@@ -5,7 +5,9 @@
 ---
 
 **Updated:** 2026-10-19
-**Phase:** 0, 1 and 2 complete. **Phase 3: 3.1 to 3.6 done.** Next is 3.7, the scheduler.
+**Phase:** 0, 1 and 2 complete. **Phase 3: 3.1 to 3.8 done.** Next is 3.9, deploy
+and observe — which is the real test of Phase 3, because everything so far was
+tested with me present.
 **Package name:** `trading_desk` (decided 2026-10-15)
 
 **Nine things are waiting on you: ISS-021 (delta bands), ISS-022 (capital figure),
@@ -17,6 +19,24 @@ input in the gate chain), and ISS-025 — still the one that matters most.**
 Telegram bot token and chat id, the `ANTHROPIC_API_KEY`, and a capital figure in
 `config/risk.yaml`. The first two are blockers; the third only costs you the size
 line, which currently reads "unavailable (ISS-022)" every morning by design.
+
+**The system can now run itself, and now scores itself.** `uv run trading-desk run`
+brings up the whole timetable - 08:15 brief, 10:00 nag, a capture poll, 15:45
+review, **16:00 scoring, 16:15 health**, the three chain captures, **21:00
+calibration**, and the nightly backup and expiry refresh - each guarded so a failure
+is logged to `data/job_runs.jsonl`, alerted as CRITICAL, and survived rather than
+silently killing the job. It needs the two credentials above to do anything useful.
+
+**Sizing is locked, and will stay locked for a while.** Confidence cannot inform
+size until 50 resolved ideas beat a naive base-rate baseline (FR-7.8). The count is
+**0**, and `verify 3_8` proves the lock cannot be opened by calibration alone - a
+forecaster that always says 70% and is right 70% of the time scores *zero skill*,
+which is the trap that number was going to walk into.
+
+**Item 8 below matters more than it used to.** The IV-rank service is wired into
+the briefing as of 3.7, and only NIFTY and RELIANCE have daily bars - so the other
+24 names produce no IV rank and die at the volatility gate, visibly, every morning,
+until the universe is backfilled.
 
 **A decision for you on the stack:** `docs/10` names **LangGraph** for the
 strategist graph and I did not use it — the graph is a static six-node DAG and
@@ -32,55 +52,48 @@ the next data step.
 
 ## Done
 
-- **Planning** — `docs/00` … `docs/15`, `CLAUDE.md`, `.claude/skills/` (5 skills)
-- **Phase 0 (0.1–0.6)** — toolchain, 4 import-linter contracts, typed settings with
-  secret redaction, value objects in integer paise, Docker Postgres
-  (TimescaleDB + pgvector) with alembic, 15 ports each with a fake, network blocked
-  in the suite. Every guard induced, not assumed.
-- **Phase 1 (1.1–1.9)** — the data spine. Live Dhan chain adapter and Parquet archive,
-  the scheduled snapshotter, universe service, bar builder, 940-bar historical
-  backfill, NSE filings (1,538 stored, free), SEBI news via RSS, calendars, the
-  append-only journal (10 database triggers, including the TRUNCATE path), IV rank
-  with a realised-vol proxy, and backup with an automated restore drill.
-- **Phase 2 (2.1–2.8)** — the decision core, all pure `domain/`. Research and proposal
-  models that cannot express a quantity, indicators and signals, Setup A (9 gates) and
-  Setup B (5 gates), the vertical-spread builder that raises rather than emit a naked
-  short, Black-76 greeks, the 13-check risk gate, the cost model and the first dry run.
-- **Step 3.1** — the LLM adapter and cost governor. Anthropic client with forced-tool
-  structured output, Haiku/Opus tiering (measured 50x apart), an append-only `llm_calls`
-  ledger (migration 0006), a cap that **refuses before the call on an estimate**, a
-  recorded-cassette client so the suite costs nothing, and local JSONL tracing.
-  Verified 10/11; the cap refusal and the append-only triggers both induced.
-- **Step 3.2** — the News & Sentiment agent. Catalyst classifier and impact analyst
-  (the only two LLM nodes), rule-based credibility scoring that shows its working,
-  the six-stage pipeline, a confusion-matrix report that refuses to pass on accuracy
-  alone, and the labelling harness. Verified 12/14; injection induced in three forms.
-  **Four of the six sub-agents already existed** as deterministic code from step 1.5.
-  Plus `domain/filing_subjects.py`: NSE's own subject vocabulary settles **60% of
-  filings with no model call** (measured over 1,542).
+Phase detail lives in `DEVLOG.md` (phase 3) and `DEVLOG-ARCHIVE.md` (phases 0–2). This is
+the index.
 
-- **Step 3.3** — the other four specialists. Fundamental (a veto table over the
-  exchange's subject vocabulary), Technical (four registered signals, **0 backtested**,
-  and it says so), Options Strategist (the `docs/02` volatility matrix encoded, not
-  prompted), Portfolio Context. **None of the four makes a model call** — they are
-  arithmetic, and the DEVLOG says why. Verified **15/15**, including `docs/12`'s
-  determinism check run early: 4 specialists x 3 runs, every measured value identical.
-
-- **Step 3.4** — the Chief Strategist graph. One cycle, six nodes, one `cycle_id`
-  on every artifact; at most two proposals; "no ideas" with a counted reason; every
-  rejection carrying the gate that killed it; append-only checkpoints (migration 0007)
-  and a response cache so a **resumed cycle repeats no paid work**. One LLM node
-  (synthesis, Opus tier) that writes prose and can return nothing else. Verified
-  **17/17**, including the strong form of `docs/12`'s determinism check: different
-  prose about the same facts, nine gate values unchanged.
-
-- **Steps 3.5 and 3.6** — the briefing and answering it. Five sections rendered
-  from a real cycle (decision message **614 chars / 12 lines**, all **9 gate values**
-  in the detail, evidence with URLs and timestamps, cost per node); Telegram adapter
-  with splitting, retries and **the bot token kept out of every error** (it is in the
-  URL path); decision capture whose state is the message trail, so a restart between
-  the tap and the reason loses nothing; the 10:00 nag, one message however many ideas.
-  Verified **11/13** and **11/12** — every failure is a credential or a real send.
+- **Planning** — `docs/00` … `docs/15`, `CLAUDE.md`, 5 skills.
+- **Phase 0 (0.1–0.6)** — toolchain, 4 import-linter contracts, redacting settings, integer
+  paise value objects, Postgres + TimescaleDB + pgvector with alembic, 20 ports each with a
+  fake, network blocked in the suite. Every guard induced, not assumed.
+- **Phase 1 (1.1–1.9)** — the data spine. Live Dhan chain adapter and Parquet archive, the
+  snapshotter, universe service, bar builder, 940-bar backfill, 1,538 NSE filings, SEBI
+  news, calendars, the append-only journal (10 triggers), IV rank with a realised-vol
+  proxy, backup with an automated restore drill.
+- **Phase 2 (2.1–2.8)** — the decision core, all pure `domain/`. Models that cannot express
+  a quantity, indicators and signals, Setup A (9 gates), Setup B (5 gates), the spread
+  builder that raises rather than emit a naked short, Black-76 greeks, the 13-check risk
+  gate, the cost model, the first dry run.
+- **Step 3.1** — LLM adapter and cost governor: Haiku/Opus tiering (measured 50x apart), an
+  append-only `llm_calls` ledger, a cap that **refuses before the call on an estimate**, a
+  cassette client so the suite costs nothing.
+- **Step 3.2** — News & Sentiment agent. Two LLM nodes only; `domain/filing_subjects.py`
+  settles **60% of filings with no model call** (measured over 1,542). Labels still pending.
+- **Step 3.3** — the other four specialists. **None makes a model call** — they are
+  arithmetic, and the DEVLOG says why. Technical has 4 signals, **0 backtested**, and says so.
+- **Step 3.4** — the Chief Strategist graph: six nodes, one `cycle_id`, at most two
+  proposals, every rejection carrying the gate that killed it, and a **resumed cycle that
+  repeats no paid work**.
+- **Steps 3.5 / 3.6** — the briefing and answering it: all **9 gate values** in the detail,
+  the bot token kept out of every error, and decision capture whose state is the message
+  trail, so a restart between the tap and the reason loses nothing.
+- **Step 3.8** — the scorekeeper. Per-setup exit rules **on the spread's premium**
+  (`docs/06`'s "60% of width", "50% of the debit lost", "2x the credit"), hypothetical
+  P&L after full costs charged at the **real exit premium**, Brier with Murphy's
+  decomposition against a base-rate baseline, the reliability curve, the no-trade band
+  and the engagement metric. Migration 0009 stores the legs and the premium each was
+  quoted at, because a P&L cannot be computed from the prose "bull call spread
+  1400/1440". Verified **32/32**, including the hand-computed Brier of **0.210000** on
+  `docs/12`'s known case and the proof that the same case leaves the sizing lock shut.
+- **Step 3.7** — the scheduler and the post-close review. The guard writes the outcome **to
+  disk before it alerts**, because if Telegram is what is down it is down at the same moment
+  the job failed. The 15:45 review **deliberately records no outcome** (P&L is 3.8's, and
+  `outcomes` is append-only). Migration 0008 stores stop, target and expiry as numbers.
+  **The IV-rank service is wired into `brief`**, so the volatility gate receives a number
+  for the first time.
 
 ## Next action
 
@@ -108,10 +121,20 @@ uv run trading-desk capture    # record whatever you answered
 uv run trading-desk nag        # chase anything unanswered after 10:00 IST
 ```
 
-**Then step 3.7 — the scheduler**, which runs the three commands above on a
-timetable (08:15 brief, 10:00 nag, a capture loop) and wires the IV-rank service
-into the cycle. Until 3.7 the briefing has no IV rank, so every idea dies at the
-volatility gate — visibly, in the rejected list.
+Or let the scheduler do all of it:
+
+```
+uv run trading-desk run         # the whole timetable, until Ctrl-C
+```
+
+**Then step 3.9 — deploy and observe.** `docs/12` calls it the real test of Phase 3:
+reboot the box unattended and the next morning's briefing must arrive with you
+touching nothing, then fault injection in four kinds (feed loss, DB down, LLM API
+error, Telegram down) where **silence is the failure**, then a 7-day soak.
+
+Note that 3.8's numbers stay at zero until ideas actually resolve. That is not a
+gap in the code - it is the point of having built the scorekeeper before there is
+anything to score.
 
 Unrelated and still outstanding from Phase 1, whenever a trading day allows:
 
@@ -188,9 +211,12 @@ aged out.
 7. **Liquidity thresholds** (`config/exchange_rules.yaml`, `verified: false`) —
    turnover ₹50L, OI 50,000, 25% priced legs, 25 stocks. Set permissive on purpose;
    tighten once the first survey shows the real spread. `verify 1_2` fails on it.
-8. **Universe backfill go-ahead.** Only NIFTY and RELIANCE have daily bars, so the
-   other 24 names produce no IV rank at all (correctly — they refuse rather than
-   guess). Needs a `backfill` command and ~24 × 940 bars of live Dhan history.
+8. **Universe backfill go-ahead — now the cheapest win on this list.** Only NIFTY
+   and RELIANCE have daily bars, so the other 24 names produce no IV rank at all
+   (correctly — they refuse rather than guess) and every one of them dies at the
+   volatility gate. Since 3.7 wired the IV-rank service into the briefing, that is
+   the difference between a 2-name universe and a 26-name one. Needs a `backfill`
+   command and ~24 × 940 bars of live Dhan history.
 9. **Offsite backup provider** — backups are local only, on the same disk as the
    database. That survives a dropped table, not a lost laptop, and the option-chain
    archive cannot be re-fetched at any price. A versioned bucket (S3, B2, R2) plus
@@ -213,40 +239,32 @@ aged out.
 
 ## Verification sweep — 2026-10-19
 
-| Step | Result | Note |
-|---|---|---|
-| 0.1 toolchain | PASS 6/6 | |
-| 0.3 config & secrets | PASS 7/7 | |
-| 0.4 value objects | PASS 10/10 | clock check is an AST walk |
-| 0.5 infrastructure | PASS 8/8 | compares against the head revision |
-| 0.6 ports & fakes | PASS 6/6 | **19 ports, 19 fakes** (`CycleStore` 3.4, `ChatPort` 3.6) |
-| 1.1a chain adapter | PASS 5/5 | live NIFTY chain, 235 strikes, greeks present |
-| 1.1b archive & snapshotter | **7 of 8** | `live_capture` needs a trading day |
-| 1.2 universe service | **6 of 7** | `thresholds_reviewed` needs your sign-off |
-| 1.3a schema & bar builder | PASS 8/8 | |
-| 1.4 historical backfill | **7 of 8** | `close_matches_an_independent_endpoint` compares a stored bar against a **live** spot, so it drifts off a trading day |
-| 1.5a exchange filings | PASS 8/8 | 1,538 filings stored live from NSE, free |
-| 1.5b news articles | PASS 7/7 | 25 SEBI articles live; 5 guards induced. RBI excluded |
-| 1.6 calendars | PASS 6/6 | expiry list audits the holiday file; found Guru Nanak missing |
-| 1.7 journal schema | PASS 8/8 | 5 tables, 10 triggers; UPDATE/DELETE/TRUNCATE all refused |
-| 1.8 IV rank | **7 of 8** | proxy path live; `universe_has_bar_history` — 2 of 26 names |
-| 1.9 backup & restore | **6 of 7** | real restore matched 3,448 rows; `copied_offsite` by design |
-| 2.1 research models | PASS 8/8 | no-size introspection induced at top level and nested |
-| 2.2 indicators & signals | PASS 8/8 | 6 signals registered, **0 backtested** |
-| 2.3 Setup A gates | **7 of 8** | 9 gates, boundaries both sides; `thresholds_signed_off` |
-| 2.4 Setup B gates | PASS 8/8 | middle band tested hardest; naked short unreachable |
-| 2.5 structure builder | **6 of 7** | real AXISBANK spread built; **ISS-021** |
-| 2.6 greeks | PASS 7/7 | matches vollib to 1.8e-15; Dhan delta gap 0.015 mean, real data |
-| 2.7 risk gate | PASS 9/9 | 13 checks, property-tested; no confidence input by shape |
-| 2.8 costs & dry run | **8 of 9** | lookahead induced; `contract_note` pending (**ISS-023**) |
-| 3.1 LLM adapter & cap | **10 of 11** | ₹1 cap blocks with the client never reached; `rates_reconciled` pending |
-| 3.2 news agent | **12 of 14** | injection induced in 3 forms; subject router settles 60% of filings; **labels pending** |
-| 3.3 four specialists | PASS 15/15 | determinism induced (3 runs identical); naked short and the size-field detector both induced |
-| 3.4 strategist graph | PASS 17/17 | resume induced (0 new calls, same answer); reworded prose moves no gate value; checkpoints append-only |
-| 3.5 briefing & delivery | **11 of 13** | 9 gate values survive; token-leak induced; `telegram_credentials`, `real_briefing` pending |
-| 3.6 decision capture | **11 of 12** | restart-between-tap-and-reason induced; journal shape drilled and rolled back; **0 of 10** briefings answered |
+**Fully passing (19 steps):** 0.1, 0.3, 0.4, 0.5, 0.6, 1.1a, 1.3a, 1.5a, 1.5b, 1.6, 1.7,
+2.1, 2.2, 2.4, 2.6, 2.7, 3.3, 3.4, **3.8**. Only the incomplete ones are listed below — the rest is
+evidence, and evidence belongs in `VERIFICATION.md`.
 
-`make check`: **966 passed, 4 contracts kept, mypy --strict clean.**
+| Step | Result | The one thing short |
+|---|---|---|
+| 1.1b archive & snapshotter | 7 of 8 | `live_capture` needs a trading day |
+| 1.2 universe service | 6 of 7 | `thresholds_reviewed` needs your sign-off |
+| 1.4 historical backfill | 7 of 8 | compares a stored bar against a **live** spot, so it drifts off a trading day |
+| 1.8 IV rank | 7 of 8 | `universe_has_bar_history` — **2 of 26 names** |
+| 1.9 backup & restore | 6 of 7 | `copied_offsite` by design; a real restore matched 3,448 rows |
+| 2.3 Setup A gates | 7 of 8 | `thresholds_signed_off` |
+| 2.5 structure builder | 6 of 7 | **ISS-021** — real AXISBANK spread did build |
+| 2.8 costs & dry run | 8 of 9 | `contract_note` pending (**ISS-023**) |
+| 3.1 LLM adapter & cap | 10 of 11 | `rates_reconciled` — needs the real cap and FX rate |
+| 3.2 news agent | 12 of 14 | **labels pending** |
+| 3.5 briefing & delivery | 11 of 13 | `telegram_credentials`, `real_briefing` |
+| 3.6 decision capture | 11 of 12 | **0 of 10** briefings answered |
+| 3.7 scheduler & review | **20 of 21** | `five_unattended_sessions` reads 0 until it has run a week |
+| 3.8 scoring & calibration | **PASS 32/32** | nothing scoreable yet - 0 ideas carry legs |
+
+`make check`: **1128 passed, 4 contracts kept, mypy --strict clean**.
+`verify 0_6`: **20 ports, 20 fakes**. Migration head is **0009**.
+
+Every outstanding failure is a credential, a sign-off, or a run that needs a live trading
+day. None is a defect.
 
 **Note on reading this table:** the runner used to print `FAIL (1 of 7)` meaning *one
 failed*. Both result lines now count passes (ISS-017).

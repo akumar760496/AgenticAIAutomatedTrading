@@ -1,6 +1,6 @@
 ---
 name: issue-log
-description: Record, triage and close development issues for this trading project in docs/state/ISSUES.md. Use when something breaks, a bug or data problem is found, a question blocks progress, or an issue needs closing.
+description: Record, triage and close development issues for this trading project in docs/state/ISSUES.md (open, with an index) and docs/state/ISSUES-ARCHIVE.md (closed). Use when something breaks, a bug or data problem is found, a question blocks progress, or an issue needs closing.
 ---
 
 # Issue log
@@ -10,7 +10,13 @@ drive-by.
 
 ## Recording
 
-Append to the `## Open` section of `docs/state/ISSUES.md`:
+Two edits to `docs/state/ISSUES.md`, both required:
+
+**1.** Add one row to the index table at the top — `| ISS-012 | open | me | bars_5m volume
+disagrees with Dhan |`. A session reads only this table, so an issue missing from it is an
+issue nobody sees.
+
+**2.** Append the full entry to the `## Open` section below:
 
 ```markdown
 ### ISS-012 — bars_5m volume disagrees with Dhan on low-volume strikes
@@ -38,15 +44,20 @@ sizing, order path or a limit), **correctness**, **reliability**, **cosmetic**.
 
 ## Closing
 
-Move the entry to `## Closed` with two lines added:
+Add two lines to the entry, then move it out of `ISSUES.md` entirely:
 
 ```markdown
 - **Fixed:** 2026-11-05 in commit abc1234 — dedupe ticks by (token, exch_ts, seq)
 - **Verified:** re-ran verify 1_3, volume now matches within 0.1% on all 25
 ```
 
-Keep `## Closed` to the last ~20 entries; move older ones to `ISSUES-ARCHIVE.md`. The open
-section is read every session, so it must stay cheap to read.
+1. Append the entry to the `## Closed` section of `docs/state/ISSUES-ARCHIVE.md`.
+2. Delete it from `ISSUES.md`, **and delete its row from the index table.** A closed issue
+   left in the index costs a session's attention every morning for ever.
+
+`ISSUES.md` holds open work only. The archive is never trimmed — a closed issue records a
+failure mode that was real once and can return, and it is cheap because nothing reads it
+except `grep`.
 
 ## Rules
 

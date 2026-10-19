@@ -60,5 +60,6 @@ deterministic router executes. Every layer exists to protect that boundary.
 
 `CLAUDE.md` holds the rules that always apply. `.claude/skills/` holds the procedures for
 recurring tasks. `docs/state/` holds where the project actually is — `STATE.md` (now),
-`DEVLOG.md` (why), `ISSUES.md` (what's broken). Start a session with the `session-start`
+`DEVLOG.md` (why, current phase — earlier phases in `DEVLOG-ARCHIVE.md`), `ISSUES.md` (what's
+broken, open only — closed ones in `ISSUES-ARCHIVE.md`). Start a session with the `session-start`
 skill; see [docs/13-dev-workflow.md](docs/13-dev-workflow.md).

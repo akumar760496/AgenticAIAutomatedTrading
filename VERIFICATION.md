@@ -153,8 +153,8 @@ A verify script that reports a false failure gets ignored, which is worse than n
 it.
 
 **Architecture change made in this step.** The `domain-is-pure` import contract no longer
-forbids `datetime`. See `docs/state/DEVLOG.md` 2026-10-15 for the reasoning and the two
-compensating controls.
+forbids `datetime`. See `docs/state/DEVLOG-ARCHIVE.md` 2026-10-15 (Package
+rename) for the reasoning and the two compensating controls.
 
 ---
 

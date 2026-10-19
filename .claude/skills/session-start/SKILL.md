@@ -10,7 +10,8 @@ Goal: be oriented in under 2,000 tokens. Do not read the whole `docs/` tree.
 ## Steps
 
 1. `cat docs/state/STATE.md` — current phase, active step, next action, blockers.
-2. `sed -n '/^## Open/,/^## Closed/p' docs/state/ISSUES.md` — open issues only.
+2. `sed -n '/^| Issue/,/^$/p' docs/state/ISSUES.md` — the open-issue index, one line
+   each. Read a `### ISS-` section only when that issue is the one being worked on.
 3. Read **only** the active step from the build plan:
    `awk '/^### Step 1\.3 /,/^### Step 1\.4 /' docs/10-build-plan.md`
 4. `git log --oneline -5` — what actually happened last.
