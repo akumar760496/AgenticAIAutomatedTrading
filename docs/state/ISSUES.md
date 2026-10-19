@@ -529,3 +529,60 @@ logged and work continues — no drive-by fixes inside a step.
   the best case means marginal setups are losers after costs, and the dry run will show
   that once it has history to run over.
 - **Status:** open, informational · **Owner:** me (remeasure slippage once fills exist)
+
+### ISS-024 — A trigger drill wrote a row into a ledger that cannot be deleted
+- **Found:** 2026-10-19, step 3.1, first run of the `llm_calls` append-only drill
+- **Severity:** resolved, but the lesson generalises to every append-only table
+- **What happened:** the drill inserted a 134-paise row into the real database to prove
+  UPDATE, DELETE and TRUNCATE are refused. All three were refused — correctly — which
+  meant the verification artefact itself could not be removed, and it would have counted
+  against October's LLM cap for the rest of the month.
+- **Cleared by** `alembic downgrade 0005 && alembic upgrade head`, which dropped and
+  re-created the table. That also proved the downgrade path works, which was untested.
+- **Fix:** every database check in `verify 3_1` now runs inside a transaction that is
+  rolled back in a `finally`. The triggers still fire inside the transaction, so the
+  induction is just as real; nothing survives it. `llm_calls` reads 0 rows after a full
+  verify run, checked.
+- **The general rule:** an append-only table cannot be drilled against in place. Either
+  roll the transaction back, or drill against a scratch database — the same conclusion
+  `docs/15` reached for restores, arrived at from the opposite direction.
+- **Checked, not assumed:** the step 1.7 journal tables were drilled the same way, so
+  they looked like they would have the same problem. They do not — all five read 0 rows.
+  The database has been reset since. Nothing to clean up there.
+- **Status:** fixed · **Owner:** me
+
+### ISS-025 — Stored filings are subject lines, not content; EARNINGS_SURPRISE is unreachable
+- **Found:** 2026-10-19, step 3.2, generating the labelling sheet from the real archive
+- **Severity:** high — it blocks the most important catalyst type in Setup A
+- **Measured:** 1,542 filings, body length **min 17 / mean 144 / max 879 characters**. The
+  bodies are stubs of the form *"X has informed the Exchange about Y"*. The actual content
+  is in a PDF attachment that the 1.5a adapter records a URL for and never fetches.
+- **Consequence:** the subject router settles 60% of filings (718 routine + 207 catalyst),
+  and the remaining **617 that "need the document" have no document to read**. The LLM
+  classifier is handed a 144-character stub and can only answer NONE honestly.
+- **The specific gap:** `EARNINGS_SURPRISE` and `GUIDANCE_CHANGE` — the two types Setup A
+  was designed around — are **structurally unreachable**. They live inside "Outcome of
+  Board Meeting" (139 filings) and "Press Release" (97), and the subject says only that
+  results were declared, never whether they beat. No amount of classifier tuning fixes
+  this; the information is not in the database.
+- **Also:** the RSS side holds **25 articles, all SEBI, spanning 3 days**. Journalism would
+  carry the earnings numbers, but no commercial Indian publisher permits this use
+  (ISS-010), so that route is closed on compliance grounds rather than technical ones.
+- **Options, cheapest first:**
+  1. **Fetch and parse the PDF attachments.** Checked, not assumed: **1,524 of 1,542
+     filings carry a real `https://nsearchives.nseindia.com/...` URL** in
+     `filings.attachments`, and **all 507 of the "needs reading" subjects have one**
+     (Outcome of Board Meeting 139/139, Press Release 97/97, General Updates 178/178,
+     Updates 93/93). So nothing needs re-crawling — the pointers are already here.
+     NSE's terms permit the documents (mandated public disclosure, the same basis as
+     the filings themselves — to be re-read before acting, per the ISS-014 standard).
+     Earnings PDFs are tabular and awkward, but the numbers are in them.
+  2. **Dhan's fundamentals endpoint**, if the paid Data API exposes reported vs estimated
+     — turns EARNINGS_SURPRISE into arithmetic rather than classification, which is
+     better anyway. Needs the ₹499/month subscription to check.
+  3. **Narrow Setup A to the five reachable catalyst types** for v1 and drop the two
+     earnings ones until a source exists. Honest, and it ships.
+- **My recommendation:** (3) now so Phase 3 is not blocked, with (1) as the next data
+  step. Taking (3) alone permanently would gut Setup A, so it is a staging decision, not
+  a final one.
+- **Status:** open, needs Ajay's call · **Owner:** Ajay to choose, me to build

@@ -22,7 +22,7 @@ class FakeLlm:
         self._queued: list[BaseModel] = []
         self.calls: list[tuple[str, str]] = []
         self.cost_per_call = Money.from_rupees(Decimal("0.50"))
-        self._spend = Money.zero()
+        self.total_spend = Money.zero()
 
     def queue(self, *responses: BaseModel) -> None:
         self._queued.extend(responses)
@@ -41,13 +41,10 @@ class FakeLlm:
             raise TypeError(
                 f"Queued a {type(value).__name__} but the call wanted {response_model.__name__}"
             )
-        self._spend = self._spend + self.cost_per_call
+        self.total_spend = self.total_spend + self.cost_per_call
         return LlmResult(
             value=value,
             usage=LlmUsage(
                 model=model, input_tokens=100, output_tokens=50, cost=self.cost_per_call
             ),
         )
-
-    def spend_this_month(self) -> Money:
-        return self._spend

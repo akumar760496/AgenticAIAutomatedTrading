@@ -18,11 +18,13 @@ from tests.fakes.expiry_store import FakeExpiryStore
 from tests.fakes.history import FakeHistory
 from tests.fakes.journal import FakeJournal
 from tests.fakes.llm import FakeLlm
+from tests.fakes.llm_ledger import FakeLlmLedger
 from tests.fakes.market_data import FakeMarketData
 from tests.fakes.news import FakeFilings, FakeNews
 from tests.fakes.news_store import FakeNewsStore
 from tests.fakes.notifier import FakeNotifier
 from tests.fakes.option_chain import FakeOptionChain
+from tests.fakes.tracer import FakeTracer
 
 __all__ = [
     "FakeBackupTool",
@@ -34,10 +36,12 @@ __all__ = [
     "FakeHistory",
     "FakeJournal",
     "FakeLlm",
+    "FakeLlmLedger",
     "FakeMarketData",
     "FakeNews",
     "FakeNewsStore",
     "FakeNotifier",
     "FakeOptionChain",
+    "FakeTracer",
     "FrozenClock",
 ]

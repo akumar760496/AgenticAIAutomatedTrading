@@ -37,3 +37,17 @@ class NewsStorePort(Protocol):
     def latest_filing_at(self, symbol: str | None = None) -> datetime | None:
         """The most recent filing time held, or None if there are none."""
         ...
+
+    def all_articles(self, limit: int) -> list[NewsArticle]:
+        """Stored articles, **oldest first**, for building a labelling sample.
+
+        Oldest first on purpose. A sample of the newest articles is a sample of
+        whatever happened this week - probably one earnings season and no
+        rating actions at all - and a classifier tuned on that learns the week
+        rather than the task.
+        """
+        ...
+
+    def all_filings(self, limit: int) -> list[Filing]:
+        """Stored filings, oldest first. Same reasoning as `all_articles`."""
+        ...

@@ -5,12 +5,19 @@
 ---
 
 **Updated:** 2026-10-19
-**Phase:** 0, 1 and 2 complete. **Next is Phase 3 — the agents, starting at 3.1.**
+**Phase:** 0, 1 and 2 complete. **Phase 3: 3.1 and 3.2 done.** Next is 3.3, the other four specialists.
 **Package name:** `trading_desk` (decided 2026-10-15)
 
-**Three decisions are waiting on you before anything else closes: ISS-021 (delta
-bands), ISS-022 (capital figure) and one real contract note.** They are the only
-reason three verifications fail; no defect is outstanding.
+**Six things are waiting on you: ISS-021 (delta bands), ISS-022 (capital figure),
+one real contract note, the LLM monthly cap, 200 hand-labelled news items, and
+ISS-025 — the one that actually matters.**
+
+**ISS-025 is the significant one.** Stored filings are subject lines, not content
+(mean body 144 characters), so `EARNINGS_SURPRISE` and `GUIDANCE_CHANGE` — the two
+catalyst types Setup A was built around — cannot be detected at all from what the
+database holds. Three options are written up in `ISSUES.md`; my recommendation is
+to narrow Setup A to the five reachable types for v1 and fetch the filing PDFs as
+the next data step.
 
 ## Done
 
@@ -28,12 +35,39 @@ reason three verifications fail; no defect is outstanding.
   models that cannot express a quantity, indicators and signals, Setup A (9 gates) and
   Setup B (5 gates), the vertical-spread builder that raises rather than emit a naked
   short, Black-76 greeks, the 13-check risk gate, the cost model and the first dry run.
+- **Step 3.1** — the LLM adapter and cost governor. Anthropic client with forced-tool
+  structured output, Haiku/Opus tiering (measured 50x apart), an append-only `llm_calls`
+  ledger (migration 0006), a cap that **refuses before the call on an estimate**, a
+  recorded-cassette client so the suite costs nothing, and local JSONL tracing.
+  Verified 10/11; the cap refusal and the append-only triggers both induced.
+- **Step 3.2** — the News & Sentiment agent. Catalyst classifier and impact analyst
+  (the only two LLM nodes), rule-based credibility scoring that shows its working,
+  the six-stage pipeline, a confusion-matrix report that refuses to pass on accuracy
+  alone, and the labelling harness. Verified 12/14; injection induced in three forms.
+  **Four of the six sub-agents already existed** as deterministic code from step 1.5.
+  Plus `domain/filing_subjects.py`: NSE's own subject vocabulary settles **60% of
+  filings with no model call** (measured over 1,542).
 
 ## Next action
 
-**Phase 3, step 3.1 — the LLM adapter and cost governor.** It needs one number from
-you first: **a monthly LLM spend cap in rupees.** The governor refuses a call that
-would cross it, so the cap is the feature, not a setting added later.
+**Your turn first, and this is the long pole.** Run:
+
+```
+uv run trading-desk label-news --count 200
+```
+
+It writes `data/labels/news_catalysts.csv` from the real archive. Fill in the
+`true_label` column with one of the seven catalyst types or `NONE`. **Most rows are
+NONE — that is expected and correct.** `docs/10` flags this as the step most likely
+to slip. Until it exists, `verify 3_2` cannot close and 3.3 onward is building on an
+unmeasured classifier.
+
+**Then step 3.3 — the other four specialists** (fundamental, technical/quant, options
+strategist, portfolio context). That one does not depend on the labels, so I can build
+it while you label.
+
+Before any live model call, set **`ANTHROPIC_API_KEY`** in `.env` and give me a real
+monthly cap (see item 1 below).
 
 Unrelated and still outstanding from Phase 1, whenever a trading day allows:
 
@@ -60,7 +94,29 @@ out.
    cost model reconciles to the rupee (FR-10.3). `verify 2_8` fails until then.
    Costs currently total ₹272.30 round trip — **13% of a real spread's best case** —
    and the largest component, ₹150 of slippage, is an assumption (ISS-023).
-4. **A monthly LLM cost cap**, for step 3.1.
+4. **ISS-025 — the earnings gap.** Narrow Setup A to five catalyst types for v1,
+   fetch and parse the filing PDFs (1,524 URLs already stored), or check whether the
+   paid Dhan Data API exposes reported-vs-estimated earnings. My recommendation: the
+   first now so Phase 3 is not blocked, the second as the next data step.
+4b. **200 hand-labelled news items** — the sheet is already written to
+   `data/labels/news_catalysts.csv` (200 rows, 97 distinct subjects). Fill in the
+   `true_label` column. 40 of them, chosen by a stable hash rather than by me, are
+   held out and neither of us looks at them while tuning. `verify 3_2` fails on this
+   and on the 90% score it gates.
+5. **The monthly LLM cap, and the FX rate** (`config/llm_pricing.yaml`,
+   `verified: false`). ₹2,000/month and 89 INR/USD are both placeholders. The rate
+   that matters is the one your card is actually billed at, including the bank's
+   markup — never the mid-market rate. The per-token prices in that file *are* real,
+   fetched from Anthropic today. `verify 3_1` fails until one month's ledger total has
+   been compared against the Anthropic console.
+5b. **An `ANTHROPIC_API_KEY` in `.env`**, before any live call.
+5c. **Tracing: Langfuse or the local file?** `docs/10` names Langfuse, which needs a
+   hosted account or a self-hosted stack. I wired a local JSONL tracer instead, which
+   meets the walk-back requirement at no cost and keeps our prompts off a third party.
+   Say if you want Langfuse — it is one class against the existing port.
+5d. **Optional: swap `claude-opus-5` for `claude-opus-5-5`** — newer and cheaper
+   ($4/$20 against $5/$25 per million). Left as `docs/10` specifies rather than
+   changed silently. One line in `config/llm_pricing.yaml`.
 5. **Setup thresholds sign-off** (`config/setups.yaml`, `verified: false`) — `verify
    2_3` fails on it by design.
 6. **IV-rank threshold definition.** `docs/06` says 60 / 70 / 35 but not whether those
@@ -99,7 +155,7 @@ out.
 | 0.3 config & secrets | PASS 7/7 | |
 | 0.4 value objects | PASS 10/10 | clock check is an AST walk |
 | 0.5 infrastructure | PASS 8/8 | compares against the head revision |
-| 0.6 ports & fakes | PASS 6/6 | 15 ports, 15 fakes |
+| 0.6 ports & fakes | PASS 6/6 | **17 ports, 17 fakes** (ledger + tracer added in 3.1) |
 | 1.1a chain adapter | PASS 5/5 | live NIFTY chain, 235 strikes, greeks present |
 | 1.1b archive & snapshotter | **7 of 8** | `live_capture` needs a trading day |
 | 1.2 universe service | **6 of 7** | `thresholds_reviewed` needs your sign-off |
@@ -119,8 +175,10 @@ out.
 | 2.6 greeks | PASS 7/7 | matches vollib to 1.8e-15; Dhan delta gap 0.015 mean, real data |
 | 2.7 risk gate | PASS 9/9 | 13 checks, property-tested; no confidence input by shape |
 | 2.8 costs & dry run | **8 of 9** | lookahead induced; `contract_note` pending (**ISS-023**) |
+| 3.1 LLM adapter & cap | **10 of 11** | ₹1 cap blocks with the client never reached; `rates_reconciled` pending |
+| 3.2 news agent | **12 of 14** | injection induced in 3 forms; subject router settles 60% of filings; **labels pending** |
 
-`make check`: **673 passed, 4 contracts kept, mypy --strict clean.**
+`make check`: **771 passed, 4 contracts kept, mypy --strict clean.**
 
 **Note on reading this table:** the runner used to print `FAIL (1 of 7)` meaning *one
 failed*. Both result lines now count passes (ISS-017).

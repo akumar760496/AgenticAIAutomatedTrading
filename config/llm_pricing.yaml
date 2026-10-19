@@ -1,0 +1,47 @@
+# What a model call costs, and the hard monthly ceiling.
+#
+# Prices are USD per million tokens, taken from Anthropic's published pricing
+# page on 2026-10-19 (https://platform.claude.com/docs/en/about-claude/pricing).
+# They are the *base* input and output rates. Prompt-cache reads are cheaper and
+# cache writes dearer; neither is modelled, so this over-states the cost of a
+# cached call and under-states an uncached write. Both are small next to getting
+# the tier wrong, and over-stating is the safe direction against a hard cap.
+#
+# `verified: false` until Ajay has compared one month's ledger total against the
+# Anthropic console. `verify 3_1` fails on this by design - the same pattern as
+# config/costs.yaml and config/setups.yaml. Published rates are evidence that
+# the numbers are right today; they are not evidence that *our accounting* of
+# them is right, and only the console comparison shows that.
+
+verified: false
+source: "Anthropic published pricing, fetched 2026-10-19"
+
+# Rupees per US dollar. The one FX assumption in the system.
+# PLACEHOLDER - Ajay to confirm against the rate his card is actually billed at,
+# which includes the bank's markup and is never the mid-market rate.
+usd_to_inr: 89
+
+# The hard ceiling. A call that would cross it is refused, not logged.
+# PLACEHOLDER - this mirrors the default in LlmSettings and needs Ajay's number.
+monthly_cap_rupees: 2000
+
+tiers:
+  # Triage: dedup, classification, entity linking. Thousands of calls a month,
+  # each one cheap and mechanical.
+  triage:
+    model: claude-haiku-5-5
+    input_usd_per_million: 0.10
+    output_usd_per_million: 0.50
+    # Note: Haiku 5.5 costs 5x more above a 100,000-token prompt. Nothing in
+    # this system sends a prompt near that, and if one ever does the ledger
+    # total will diverge from the console - which is what the check is for.
+
+  # Synthesis: the market-research analyst writing the briefing. A handful of
+  # calls a day, each one worth paying for.
+  synthesis:
+    model: claude-opus-5
+    input_usd_per_million: 5.00
+    output_usd_per_million: 25.00
+    # docs/10 step 3.1 names claude-opus-5. Claude Opus 5.5 is both newer and
+    # cheaper ($4 / $20), so this is worth revisiting - but swapping the model
+    # the plan specifies is Ajay's call, not a silent config edit (rule 10).

@@ -22,6 +22,9 @@ dependencies = [
     # OpenSSL store, which on macOS lacks the root SEBI's certificate chains to;
     # every request failed TLS and the error was swallowed as an empty feed.
     "certifi>=2024.8.30",
+    # Step 3.1: the LLM adapter. Structured output uses a forced tool call, so
+    # the SDK is doing schema enforcement rather than the prompt asking nicely.
+    "anthropic>=0.40",
 ]
 
 [project.scripts]

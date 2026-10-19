@@ -22,11 +22,13 @@ from trading_desk.ports.expiry_store import ExpiryStorePort
 from trading_desk.ports.history import HistoricalBarsPort
 from trading_desk.ports.journal import JournalPort
 from trading_desk.ports.llm import LlmPort
+from trading_desk.ports.llm_ledger import LlmLedger
 from trading_desk.ports.market_data import MarketDataPort
 from trading_desk.ports.news import FilingsPort, NewsPort
 from trading_desk.ports.news_store import NewsStorePort
 from trading_desk.ports.notifier import NotifierPort
 from trading_desk.ports.option_chain import OptionChainPort
+from trading_desk.ports.tracing import Tracer
 
 TITLE = "Ports and fakes"
 
@@ -35,8 +37,14 @@ ROOT = Path(__file__).resolve().parents[2]
 # Ten ports, nine files: ports/news.py declares both NewsPort and FilingsPort.
 # Counting files here instead of ports is what let ChainArchivePort go unchecked
 # from step 1.1b until a Phase 0 re-run in step 1.2 found the mismatch.
-EXPECTED_PORT_COUNT = 15
+EXPECTED_PORT_COUNT = 17
 
+# `GovernedLlmPort` (ports/llm.py) is deliberately NOT in this inventory and has
+# no fake. It is not an external dependency - it is the internal seam that lets
+# `agents/` depend on an interface rather than on `application.llm_governor`.
+# The agent tests build a real `CostGovernedLlm` over `FakeLlm`, which exercises
+# the cap and the ledger for free; a fake governor would make them weaker, not
+# more isolated. Added in step 3.2.
 EXPECTED_PORTS = [
     BackupToolPort,
     BarStorePort,
@@ -47,12 +55,14 @@ EXPECTED_PORTS = [
     HistoricalBarsPort,
     FilingsPort,
     JournalPort,
+    LlmLedger,
     LlmPort,
     MarketDataPort,
     NewsPort,
     NewsStorePort,
     NotifierPort,
     OptionChainPort,
+    Tracer,
 ]
 
 # Anything that could put an order into the market. None of these may exist in v1.

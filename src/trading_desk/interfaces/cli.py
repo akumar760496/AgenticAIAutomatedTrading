@@ -34,9 +34,17 @@ from trading_desk.adapters.dhan.instruments import DhanInstrumentMaster
 from trading_desk.adapters.dhan.login import ensure_valid_token, hours_remaining
 from trading_desk.adapters.dhan.token_store import StoredTokenProvider
 from trading_desk.adapters.notify.logging_notifier import LoggingNotifier
+from trading_desk.adapters.store.news_repository import PostgresNewsStore
 from trading_desk.adapters.store.parquet_chain import ParquetChainArchive
 from trading_desk.application.calendars import TradingCalendar, load_trading_calendar
 from trading_desk.application.exchange_rules import load_exchange_rules
+from trading_desk.application.label_set import (
+    DEFAULT_LABEL_PATH,
+    DEFAULT_SAMPLE_SIZE,
+    VALID_LABELS,
+    LabelFileError,
+    write_sample,
+)
 from trading_desk.application.liquidity_survey import LiquiditySurvey
 from trading_desk.application.snapshotter import ChainSnapshotter
 from trading_desk.application.universe import load_universe_request, resolve_universe
@@ -48,7 +56,9 @@ from trading_desk.application.universe_builder import (
     render_universe,
 )
 from trading_desk.domain.liquidity import rank_by_liquidity
-from trading_desk.infra.config import load_app_settings, load_dhan_settings
+from trading_desk.domain.news import filing_as_article
+from trading_desk.infra.config import load_app_settings, load_dhan_settings, load_infra_settings
+from trading_desk.infra.db import create_db_engine, create_session_factory
 from trading_desk.infra.logging import configure_logging, register_secret
 from trading_desk.ports.notifier import AlertLevel
 
@@ -217,8 +227,55 @@ def _run_survey() -> int:
     return 0
 
 
+def _write_label_sheet() -> int:
+    """Draw a sample from the news archive for hand-labelling (step 3.2).
+
+    Reads nothing from Dhan, so it is dispatched before the broker settings are
+    loaded - a labelling command that needs trading credentials is a labelling
+    command that cannot be run on a laptop without them.
+    """
+    size = DEFAULT_SAMPLE_SIZE
+    for index, argument in enumerate(sys.argv):
+        if argument == "--count" and index + 1 < len(sys.argv):
+            size = int(sys.argv[index + 1])
+
+    store = PostgresNewsStore(create_session_factory(create_db_engine(load_infra_settings())))
+    # Over-draw then trim, so the sample is taken from the widest slice of
+    # history available rather than the first N rows of it.
+    #
+    # Filings as well as articles. Exchange filings are the primary catalyst
+    # source - an earnings beat or an order win arrives as a filing first and
+    # as journalism afterwards - and they are the bulk of what the archive
+    # actually holds. Labelling only the RSS articles would train and measure
+    # the classifier on the thinner half of its real input.
+    articles = store.all_articles(limit=size * 20)
+    filings = [filing_as_article(filing) for filing in store.all_filings(limit=size * 20)]
+    documents = articles + filings
+    if not documents:
+        print("The archive is empty. Run the news ingest first.", file=sys.stderr)
+        return 1
+
+    try:
+        written = write_sample(documents, size=size)
+    except LabelFileError as error:
+        print(str(error), file=sys.stderr)
+        return 1
+
+    print(f"Wrote {written} rows to {DEFAULT_LABEL_PATH}")
+    print(f"Drawn from {len(articles)} articles and {len(filings)} filings.")
+    print("Fill in the true_label column with one of:")
+    print("  " + ", ".join(sorted(VALID_LABELS)))
+    print("Most rows are NONE. That is expected and correct.")
+    return 0
+
+
 def main() -> int:
     command = sys.argv[1] if len(sys.argv) > 1 else "run"
+
+    # Before the Dhan settings load: this one needs a database, not a broker.
+    if command == "label-news":
+        configure_logging(load_app_settings().log_level)
+        return _write_label_sheet()
 
     settings = load_dhan_settings()
     register_secret(settings.api_secret)
@@ -236,7 +293,7 @@ def main() -> int:
         return _start_scheduler()
 
     print(f"Unknown command: {command}", file=sys.stderr)
-    print("Usage: trading-desk [run|snapshot|login|survey]", file=sys.stderr)
+    print("Usage: trading-desk [run|snapshot|login|survey|label-news]", file=sys.stderr)
     return 2
 
 

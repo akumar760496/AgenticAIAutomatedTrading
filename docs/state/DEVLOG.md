@@ -1550,3 +1550,212 @@ Two facts corrected while rewriting rather than copied forward: the 0.6 row said
 ports, 10 fakes" when `verify 0_6` reports **15** (checked, not assumed), and the token
 noted as valid until ~16:36 on the 19th has now expired, so `make login` is needed before
 any live call.
+
+## 2026-10-19 — Step 3.1: the LLM adapter and the cost governor
+
+The first step of Phase 3, and the first code in the project that can spend
+money on its own. That framing drove every decision below.
+
+**The cap refuses before the call, on a deliberately pessimistic estimate.**
+This is the one design choice worth arguing about, so: the true cost of a call
+is only known once it has returned, and by then it is spent. A check that
+compares *spend so far* against the cap therefore always allows one more call,
+and that call is unbounded in size. So `check_cap` compares `spent + estimated`
+and refuses if the sum crosses. The estimate counts 3 characters to the token
+(English runs nearer 4) and assumes a full-length 2,000-token response, both
+wrong in the safe direction. `docs/10` is explicit that the cap must refuse
+rather than alert afterwards; alerting afterwards is a receipt.
+
+**`spend_this_month()` came off `LlmPort`.** It was a reasonable guess in step
+0.6 and it is wrong: asking a *client* what we have spent gives a different
+answer in every process, and a cap that resets when the scheduler restarts is
+not a monthly cap. Spend now lives in `ports/llm_ledger.py`, backed by the
+`llm_calls` table, and `application/llm_governor.CostGovernedLlm` combines the
+two. Ports went 15 -> 17 (`LlmLedger`, `Tracer`); `verify 0_6` updated.
+
+**Structured output is a forced tool call, not a prompt asking for JSON.**
+Asking for JSON gets JSON most of the time and an apology wrapped around JSON
+the rest. The Pydantic schema goes up as a tool with `tool_choice` pinned to
+it. A response that still fails validation **is not retried** - the same prompt
+returns the same shape, so a retry spends the call again to receive the same
+malformed answer. Retries cover transport and rate limits only.
+
+**Migration 0006 is append-only, enforced by triggers**, the same shape as the
+journal in 0005 including the statement-level TRUNCATE trigger. A spend ledger
+that can be edited cannot answer "did we stay under the cap in March?", which
+is the only question it exists for.
+
+**Two findings worth recording.**
+
+The first is a mistake I made and had to undo. The trigger drill ran against
+the real database and inserted a 134-paise row - which, the triggers working
+exactly as designed, could not then be deleted. A verification artefact was
+permanently in a financial ledger and counting against October's cap. Cleared
+by `alembic downgrade 0005 && upgrade head`, which also proved the downgrade
+path works. Every database check in `verify 3_1` now runs inside a transaction
+that is rolled back, and the ledger reads 0 rows after a full verify run.
+
+The second is the familiar one. `verify 3_1` first printed the per-node report
+as rupee figures - which came from `FakeLlm`'s flat 50-paise-per-call constant,
+not from pricing, sitting beside the genuinely priced ₹13.35 / ₹667.50 tiering
+line. That is the third time this session's family of mistakes has appeared:
+a fixture constant printed as though it were measured. It now prints call
+counts and says in the line itself that it checks grouping, not pricing.
+
+**Prices are real, the cap and the FX rate are not.** The per-million rates in
+`config/llm_pricing.yaml` were fetched from Anthropic's published pricing page
+today, so triage on Haiku 5.5 is $0.10/$0.50 and synthesis on Opus 5 is
+$5/$25 - measured 50x apart at the same token counts, which is what justifies
+having two tiers at all. The ₹2,000 cap and the 89 INR/USD rate are both
+placeholders. `verified: false`, so `verify 3_1` fails on it by design until
+one month's ledger total has been compared against the Anthropic console:
+published rates prove the prices are right, only the console proves our
+*accounting* of them is.
+
+**Langfuse is not wired, deliberately.** `docs/10` names it; it needs a hosted
+account or a self-hosted stack, and that is a signup decision rather than
+mine. The requirement it exists to serve here is `docs/12` step 3.4 - walk back
+from any briefing line to the calls behind it - and `adapters/tracing/jsonl.py`
+satisfies that today at no cost, with no third party holding our prompts.
+Swapping in Langfuse later is one class against `ports.tracing.Tracer`.
+
+Also: `claude-opus-5-5` is both newer and cheaper than the `claude-opus-5` that
+`docs/10` names ($4/$20 against $5/$25). Left as the plan specifies rather than
+swapped silently (rule 10); it is a one-line config change whenever Ajay says.
+
+`verify 3_1`: **10 of 11**, the failure being `rates_reconciled_with_console`.
+`make check`: 712 passed (up from 673), 4 contracts kept, mypy clean.
+
+## 2026-10-19 — Step 3.2: the News & Sentiment agent
+
+`docs/10` asks for six sub-agents. **Four of them already existed** and are
+deterministic domain code from step 1.5: the ingestor (`application/news_ingest.py`),
+the deduper (`domain/similarity.py`), the entity linker (`domain/entities.py`) and
+the injection inspector (`domain/untrusted.py`). What was genuinely missing was the
+catalyst classifier, the credibility scorer, the impact analyst, and the means to
+score any of it.
+
+**Credibility is rules, not a model, and that was a decision rather than a
+shortcut.** `docs/12` asks Ajay to read twenty credibility scores with their stated
+rules and say whether he agrees. That is impossible if the number came out of an
+LLM: you cannot audit a score whose reasoning is re-derived each time, and "the
+model thought 0.62" is not a rule anyone can disagree with. So `domain/credibility.py`
+is arithmetic over a source tier and some phrasing patterns, and every score carries
+the rules and the matched words that produced it.
+
+The load-bearing part is the **hedging ceiling**. `docs/06` says "sources say"
+stories are capped below 0.7 and cannot trigger alone. Implemented as a ceiling
+applied *last*, not as a penalty - measured in `verify 3_2`: a hedged story with
+every available bonus (named attribution, a cited filing, ten corroborating
+publishers) still scores **0.65** against Setup A's 0.70, while a clean Tier-1
+story scores 0.85. A penalty can be out-earned; a ceiling cannot.
+
+**Stage order is a cost decision as much as a correctness one.** Deduping and
+entity-linking happen *before* classification, so three outlets carrying one
+announcement cost one model call rather than three (measured: 3 articles in, 1
+story, 2 calls), and an article naming no universe instrument costs **zero** calls.
+At a few hundred articles a day that is the difference between a few hundred calls
+a month and a few thousand.
+
+**Two guards on the classifier that the prompt cannot provide.** The response
+schema admits only the closed seven-type vocabulary plus NONE, so an eighth
+category cannot be returned - it fails validation instead. And the evidence quote
+is checked against the article text: a quote that is not in the source means the
+model wrote the sentence rather than found it, and the label is downgraded to NONE
+with the reason recorded. That catches a confident fabrication without having to
+judge whether the classification happened to be right.
+
+**Injection fixtures in three forms**, as `docs/12` asks: in the body, in the
+headline, and inside a quoted statement. The third is the realistic one - corporate
+announcements legitimately contain quotes, so the attacker does not have to make
+the text look odd, only to be quoted saying it. All three are flagged, none changes
+behaviour, and the article is still classified rather than filtered: dropping it
+would discard the evidence that someone tried. The headline goes *inside* the fence
+with the body for the same reason - a headline feels like metadata and is neither
+shorter nor safer.
+
+**The accuracy check cannot be satisfied by an accuracy number.** `docs/12` is
+explicit that accuracy hides a classifier that never predicts the rare catalyst
+types. `verify 3_2` induces exactly that failure: an always-NONE classifier is fed
+in, scores **90%**, and the report names both never-predicted classes rather than
+passing it.
+
+**New: `ports/llm.GovernedLlmPort`.** Agents may import domain and ports only, so
+depending on `application.llm_governor` directly would have left that contract
+technically unviolated but dishonest. It is deliberately *not* in the step 0.6
+fakes inventory and has no fake, with the reason written at the inventory: the
+agent tests build a real `CostGovernedLlm` over `FakeLlm`, which exercises the cap
+and the ledger for free, and a fake governor would make them weaker.
+
+Also added `NewsStorePort.all_articles(limit)` - the store could write articles but
+not read them back, so there was no way to draw a labelling sample. Oldest-first,
+because a sample of the newest articles is a sample of whatever happened this week
+(one earnings season, no rating actions) and a classifier tuned on that learns the
+week rather than the task.
+
+**`trading-desk label-news --count 200`** writes the blank labelling sheet. It is
+dispatched *before* the Dhan settings load: a labelling command that needs trading
+credentials is one that cannot be run on a laptop without them. The sheet is
+shuffled by a stable hash rather than ordered by date, because 200 articles in date
+order are read in topic clusters and by item 40 the labeller is answering from
+momentum. The same hash decides the held-out split, so membership never drifts as
+the set grows - which is what makes "never looked at while tuning" enforceable
+rather than a promise. Writing refuses to overwrite an existing file.
+
+`verify 3_2`: **10 of 12**. Both failures are the labelled set, which is Ajay's.
+`make check`: 757 passed (up from 712), 4 contracts kept, mypy clean.
+
+## 2026-10-19 (continued) — Step 3.2 found that the archive cannot support it
+
+Two findings while generating the labelling sheet from real data, and the second
+one is the most consequential thing in Phase 3 so far.
+
+**The exchange had already classified most of the archive.** NSE filings carry a
+`subject` from a controlled vocabulary — 60 distinct values across 1,542 filings.
+Measured: the subject alone settles **60% of them** (718 routine + 207 catalyst),
+at zero model cost. `domain/filing_subjects.py` is that lookup, wired in front of
+the classifier in `CatalystClassifier._by_subject`. Paying an LLM to re-derive
+"Credit Rating" from a filing titled "Credit Rating" is a worse answer at a price.
+
+The important design detail is the **three-way** return: a catalyst type, or NONE,
+or `None` meaning "the subject does not decide — read the document". Collapsing the
+last two would have been the serious error. "Outcome of Board Meeting" is not
+routine, it is *undetermined*, and routing it to NONE would silently discard every
+earnings announcement in the archive with nothing anywhere reporting an absence.
+`verify 3_2` checks that specific mistake rather than trusting the map.
+
+**Then: the filings have no content (ISS-025).** Body length is min 17, mean 144,
+max 879 characters — stubs reading "X has informed the Exchange about Y". The real
+content is a PDF we record a URL for and never fetch. So the 617 filings that
+"need the document" have no document, and the classifier can only honestly answer
+NONE. `EARNINGS_SURPRISE` and `GUIDANCE_CHANGE` — the two types Setup A was
+designed around — are **structurally unreachable** from what is stored. No
+classifier tuning fixes that; the information is not in the database.
+
+I checked rather than assumed the fix is available: **1,524 of 1,542 filings carry
+a real nsearchives.nseindia.com URL, and 100% of the "needs reading" subjects do.**
+Nothing needs re-crawling.
+
+**The labelling sheet was wrong on the first attempt and I regenerated it.** A
+uniform draw over this archive is 93% compliance boilerplate, because that is what
+the archive is — five subjects are over half of it. Ajay would have labelled 200
+rows of "Certificate under SEBI (Depositories and Participants) Regulations" and
+the resulting test set would have been one a constant could pass. `stratified_sample`
+now round-robins across subject strata: 97 distinct subjects across 200 rows instead
+of a handful.
+
+That trade is stated in the module docstring rather than left implicit: **a
+stratified set deliberately over-represents the rare types, so its accuracy number
+is not the production accuracy.** It is the right trade — per-class recall is what
+`docs/12` asks for and a uniform sample cannot give it — but the headline percentage
+must never be quoted as "how often the classifier is right on a normal day".
+
+Also added `NewsStorePort.all_filings` and `domain/news.filing_as_article`, because
+the news agent was only ever going to see the 25 RSS articles while 1,542 filings
+sat unread beside them. Filings are the *primary* catalyst source — an order win
+arrives as a filing first and as journalism afterwards — and they carry
+`SourceTier.EXCHANGE`, which the credibility scorer already scored at 1.0, so the
+plumbing was half-built and pointed nowhere.
+
+`verify 3_2`: **12 of 14.** Both failures are the labelled set.
+`make check`: 771 passed, 4 contracts kept, mypy clean.

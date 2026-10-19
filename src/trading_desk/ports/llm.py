@@ -3,6 +3,12 @@
 Structured output only. An agent returns a validated object or the cycle fails -
 there is no path where prose reaches a decision. Cost is returned with every call
 because the monthly cap refuses calls rather than alerting after the fact.
+
+This port is the *model* and nothing else. It does not know the budget: asking a
+client how much we have spent gives a different answer per process, and a cap
+that resets on restart is not a monthly cap. Spend lives in `ports/llm_ledger.py`
+and the two are combined by `application.llm_governor`, which is what agents are
+handed.
 """
 
 from __future__ import annotations
@@ -12,6 +18,7 @@ from typing import Protocol, TypeVar
 
 from pydantic import BaseModel
 
+from trading_desk.domain.llm_cost import ModelTier
 from trading_desk.domain.values import Money
 
 ResponseModel = TypeVar("ResponseModel", bound=BaseModel)
@@ -54,6 +61,29 @@ class LlmPort(Protocol):
         """
         ...
 
-    def spend_this_month(self) -> Money:
-        """Total spend in the current calendar month, for the cap check."""
+
+class GovernedLlmPort(Protocol):
+    """A model call that is already budgeted, recorded and traced.
+
+    This is what an agent is given. It exists as a port so `agents/` can depend
+    on an interface rather than on `application.llm_governor`, keeping the
+    import-linter contract "agents may import domain and ports only" honest
+    rather than merely unviolated.
+
+    Every call names its node and cycle. Without those the per-node cost report
+    cannot be built, and a briefing that cannot say what it cost is not
+    auditable - so they are required arguments, not optional context.
+    """
+
+    def complete[T: BaseModel](
+        self,
+        *,
+        node: str,
+        cycle_id: str,
+        tier: ModelTier,
+        system_prompt: str,
+        user_content: str,
+        response_model: type[T],
+    ) -> LlmResult[T]:
+        """Make one governed call, or raise if the month's cap would be crossed."""
         ...

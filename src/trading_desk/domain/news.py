@@ -76,3 +76,30 @@ class Filing:
     @property
     def source_tier(self) -> SourceTier:
         return SourceTier.EXCHANGE
+
+
+def filing_as_article(filing: Filing) -> NewsArticle:
+    """A filing, in the shape the news agent reads.
+
+    Exchange filings are the **primary** catalyst source: an earnings beat, an
+    order win, a management exit and a rating action all arrive as a filing
+    first and as journalism afterwards. The classifier would be strange to run
+    only over the reporting and never over the document being reported on.
+
+    Not a `NewsArticle` subclass, and the two types stay distinct in the store
+    (`ports/news.py` explains why). This is a presentation at the edge of the
+    agent, so one classifier, one deduper and one credibility scorer serve both
+    - and `source_tier` carries through as EXCHANGE, which is what makes the
+    credibility scorer treat it as fact rather than as reporting.
+    """
+    return NewsArticle(
+        article_id=f"filing:{filing.filing_id}",
+        headline=filing.subject,
+        body=filing.body,
+        url=filing.url,
+        publisher=f"{filing.symbol} (exchange filing)",
+        source_tier=filing.source_tier,
+        published_at=filing.filed_at,
+        ingested_at=filing.ingested_at,
+        instrument_symbols=(filing.symbol,),
+    )

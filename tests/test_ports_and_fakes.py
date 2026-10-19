@@ -67,8 +67,10 @@ class TestFakesSatisfyTheirPorts:
         assert filings.fetch_since(NOW, []) == []
 
     def test_llm(self) -> None:
-        fake: LlmPort = FakeLlm()
-        assert fake.spend_this_month() == Money.zero()
+        fake = FakeLlm()
+        port: LlmPort = fake  # the binding is the check; Protocols are structural
+        assert port is fake
+        assert fake.calls == []
 
     def test_notifier(self) -> None:
         fake: NotifierPort = FakeNotifier()

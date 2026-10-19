@@ -51,3 +51,16 @@ class FakeNewsStore:
             if symbol is None or filing.symbol == symbol
         ]
         return max(times) if times else None
+
+    def all_articles(self, limit: int) -> list[NewsArticle]:
+        """Oldest first, matching the Postgres store's ORDER BY."""
+        ordered = sorted(
+            self.articles.values(), key=lambda article: (article.published_at, article.article_id)
+        )
+        return ordered[:limit]
+
+    def all_filings(self, limit: int) -> list[Filing]:
+        ordered = sorted(
+            self.filings.values(), key=lambda filing: (filing.filed_at, filing.filing_id)
+        )
+        return ordered[:limit]
