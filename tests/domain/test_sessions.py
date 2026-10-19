@@ -10,7 +10,13 @@ from datetime import date, datetime, time
 
 import pytest
 
-from trading_desk.domain.sessions import SessionHours, bar_start, session_for
+from trading_desk.domain.sessions import (
+    SessionHours,
+    bar_start,
+    is_trading_day,
+    session_for,
+    sessions_between,
+)
 from trading_desk.domain.timezones import IST
 
 HOURS = SessionHours(open_ist=time(9, 15), close_ist=time(15, 30))
@@ -77,3 +83,37 @@ class TestBarStart:
     def test_a_zero_interval_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="interval must be positive"):
             bar_start(_ist(10, 0), 0, SESSION)
+
+
+class TestCountingSessions:
+    """Setup A's recency gate counts trading sessions, not calendar days.
+
+    The distinction is the whole point: a Friday evening filing is one session
+    old on Monday, and a gate that counted three days would discard it.
+    """
+
+    def test_a_friday_filing_is_one_session_old_on_monday(self) -> None:
+        friday = date(2026, 10, 16)
+        monday = date(2026, 10, 19)
+
+        assert sessions_between(friday, monday, frozenset()) == 1
+
+    def test_a_holiday_inside_the_gap_does_not_count(self) -> None:
+        friday = date(2026, 10, 16)
+        tuesday = date(2026, 10, 20)
+        holiday = frozenset({date(2026, 10, 19)})
+
+        assert sessions_between(friday, tuesday, holiday) == 1
+
+    def test_the_same_day_is_zero_sessions(self) -> None:
+        day = date(2026, 10, 19)
+
+        assert sessions_between(day, day, frozenset()) == 0
+
+    def test_a_catalyst_dated_in_the_future_is_zero_not_negative(self) -> None:
+        """A negative answer would sail through a `<= 2` recency check."""
+        assert sessions_between(date(2026, 11, 1), date(2026, 10, 19), frozenset()) == 0
+
+    def test_a_weekend_day_is_not_a_trading_day(self) -> None:
+        assert not is_trading_day(date(2026, 10, 17), frozenset())  # Saturday
+        assert is_trading_day(date(2026, 10, 19), frozenset())  # Monday

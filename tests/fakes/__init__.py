@@ -13,7 +13,9 @@ from tests.fakes.backup import FakeBackupTool
 from tests.fakes.bar_store import FakeBarStore
 from tests.fakes.broker import FakeBrokerRead
 from tests.fakes.chain_archive import FakeChainArchive
+from tests.fakes.chat import FakeChat
 from tests.fakes.clock import FrozenClock
+from tests.fakes.cycle_store import FakeCycleStore
 from tests.fakes.expiry_store import FakeExpiryStore
 from tests.fakes.history import FakeHistory
 from tests.fakes.journal import FakeJournal
@@ -31,6 +33,8 @@ __all__ = [
     "FakeBarStore",
     "FakeBrokerRead",
     "FakeChainArchive",
+    "FakeChat",
+    "FakeCycleStore",
     "FakeExpiryStore",
     "FakeFilings",
     "FakeHistory",

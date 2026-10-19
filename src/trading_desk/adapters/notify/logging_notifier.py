@@ -10,6 +10,7 @@ CRITICAL is logged at ERROR so it stands out in a file nobody is watching live.
 from __future__ import annotations
 
 import logging
+from uuid import UUID
 
 from trading_desk.ports.clock import Clock
 from trading_desk.ports.notifier import AlertLevel, DeliveryReceipt
@@ -40,4 +41,14 @@ class LoggingNotifier:
 
     def send_alert(self, level: AlertLevel, message: str) -> DeliveryReceipt:
         logger.log(_LEVEL_MAP[level], "[%s] %s", level, message)
+        return self._receipt()
+
+    def ask_decision(self, idea_id: UUID, markdown: str) -> DeliveryReceipt:
+        """Logs the question nobody can answer here.
+
+        A log file has no buttons, so this records what would have been asked.
+        The capture loop in step 3.6 needs a real chat; this stand-in exists so
+        the rest of the system runs without one.
+        """
+        logger.info("DECISION NEEDED [%s]\n%s", idea_id, markdown)
         return self._receipt()

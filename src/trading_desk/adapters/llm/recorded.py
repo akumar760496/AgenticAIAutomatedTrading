@@ -21,13 +21,13 @@ then commit the JSON. Cassettes hold model output, not credentials (rule 8).
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
 
+from trading_desk.domain.call_identity import call_key
 from trading_desk.domain.llm_cost import LlmPricing, ModelTier, cost_of_call
 from trading_desk.ports.llm import LlmPort, LlmResult, LlmUsage
 
@@ -39,10 +39,13 @@ class CassetteMissError(RuntimeError):
 
 
 def cassette_key(model: str, system_prompt: str, user_content: str) -> str:
-    """A short, stable name for one call. The prompt is hashed, not stored in
-    the filename, because prompts are long and contain newlines."""
-    digest = hashlib.sha256(f"{model}\n{system_prompt}\n{user_content}".encode()).hexdigest()
-    return f"{model}-{digest[:16]}"
+    """A short, stable name for one call, shared with the cycle response cache.
+
+    Kept as a name here because the cassette files on disk are named by it, and
+    because `cassette_key` is what the recording workflow talks about. The
+    definition itself lives in the domain so the two callers cannot drift.
+    """
+    return call_key(model, system_prompt, user_content)
 
 
 class RecordedLlm:

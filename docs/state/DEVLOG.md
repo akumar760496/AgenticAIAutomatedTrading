@@ -1759,3 +1759,379 @@ plumbing was half-built and pointed nowhere.
 
 `verify 3_2`: **12 of 14.** Both failures are the labelled set.
 `make check`: 771 passed, 4 contracts kept, mypy clean.
+
+## 2026-10-19 (continued) — Step 3.3, scope decided before the code (rule 10)
+
+Four specialists to build: fundamental, technical/quant, options strategist,
+portfolio context. `docs/10` is explicit about their shape — "the agent gathers
+inputs, the gate decides" — so the design question is not what each one *thinks*
+but what each one is allowed to *touch*.
+
+**Decision 1: three of the four make no model call at all.** The news agent needed
+two, because classifying free text is a judgement. These four are not. Fundamental
+reads a controlled vocabulary (the same NSE subject field that settled 60% of the
+archive in 3.2), technical is arithmetic over bars, options is arithmetic over a
+chain plus a documented structure matrix, portfolio is arithmetic over positions.
+Adding a model to any of them would buy a worse answer at a price, and — given
+ISS-025, where filing bodies average 144 characters — would mostly be asking a
+model to reason about a stub. The agents are still agents: they decide what to
+gather, they call gate functions, they report what they could not get. They just
+do not need a model to do it. This is a departure from `docs/02`, which implies
+an LLM in the technical and options agents, so it is written here rather than done
+quietly.
+
+**Decision 2: a specialist never invents a number, and never half-reports one.**
+Each returns a typed view carrying `measurements` (rule 9: values, not verdicts),
+`vetoes`, and `unavailable` — the inputs it could not get, with the reason. An
+agent that cannot compute net delta says so; it does not return a partial sum that
+reads like a real one (rule 6).
+
+**New, with the reason:**
+
+- `domain/specialists.py` — `SpecialistFinding`, the common shape above. One type
+  so the 3.4 graph can merge four answers without four special cases.
+- `domain/governance.py` — the veto table. NSE subject → governance flag, measured
+  against the 1,542 filings held today, same method as `domain/filing_subjects.py`.
+- `domain/options/selection.py` — the structure matrix from `docs/02` ("high IV
+  rank into an event → defined-risk credit; low IV with a catalyst → debit") as
+  code, because `docs/02` says to encode it rather than prompt it.
+- `BarStorePort.daily_bars` — ATR, range and volume ratio need OHLCV, and the port
+  only exposed closes and dates. A port method, not a new port.
+- `NewsStorePort.filings_for` — the fundamental agent asks about one symbol; it
+  had only `all_filings(limit)`, which means reading the archive to answer a
+  question about one name.
+
+**Not built, deliberately:** no Risk Narrator (it is step 3.5's, and it has no
+approval authority), no position manager, no sector concentration — there is no
+sector map anywhere in `config/`, and inventing one would be exactly the kind of
+plausible-looking data these rules exist to keep out.
+
+## 2026-10-19 (continued) — Step 3.3 built: four specialists, no model calls
+
+`verify 3_3`: **15 of 15.** `make check`: 849 passed (up from 771), 4 contracts
+kept, mypy clean.
+
+**What the four actually are.** Fundamental reads one company's filings and
+answers "is there a reason to leave this alone"; technical measures four
+registered signals over bars; options picks an expiry, measures the chain and
+builds a vertical through the encoded volatility matrix; portfolio sums what is
+already held. Each returns a `SpecialistFinding` carrying measurements, vetoes
+and — the field that earns its place — `unavailable`.
+
+**The determinism check from `docs/12` runs now rather than at 3.4.** Each
+specialist, three runs, same inputs: every measured value byte-identical. It is
+nearly free here and would be expensive to retrofit once the graph exists, and
+`docs/12` calls a drift in gate values "the most important invariant in the
+system".
+
+**Two findings, both measured, both now blocking on Ajay:**
+
+- **ISS-026 — the Fundamental agent cannot see its own headline case.** `docs/02`
+  names pledged shares as the primary disqualifier. **0 of 1,542 filings mention
+  pledge, encumbrance or promoter.** Those arrive under SEBI SAST/PIT on an NSE
+  endpoint step 1.5 does not poll. The agent reports the blind spot in
+  `unavailable` on *every* call, including clean ones, so a silence cannot be
+  read as a clean record — but the veto is weaker than `docs/06` assumes.
+- **ISS-027 — there is no sector map.** 9 config files, none naming a sector. So
+  the "seventh correlated long Nifty-bank bet" that `docs/02` names as the
+  classic agentic failure is exactly the one this agent cannot catch. Writing a
+  25-name sector map from memory would have looked authoritative and been
+  unsourced; NSE's own sectoral index membership is the free, published answer
+  and is one config file away.
+
+**A third gap, smaller: `config/setups.yaml` gives Setup B's debit variant no
+delta bands.** The credit variant has a short-leg band and both variants have
+expiry windows, but nothing says which strikes a Setup B debit spread buys. The
+agent refuses that path with the reason attached rather than borrowing Setup A's
+bands, which would have been a silent reuse of numbers chosen for a different
+instrument. The credit wing offset is in the same position and is a constructor
+argument pending sign-off.
+
+**Setup A never sells premium, swept rather than spot-checked.** 101 IV ranks,
+0 credit structures, 61 debit, 40 refusals at the configured ceiling of 60. The
+matrix in `domain/options/selection.py` takes `credit_above=None` for Setup A,
+which says "this setup has no credit answer" rather than "the threshold is very
+high" — a distinction that shows up in the refusal text a reader sees.
+
+**One test was wrong before it was right, and the wrongness is the useful part.**
+`test_a_chain_with_no_wing_refuses_rather_than_going_naked_short` passed
+immediately, which was suspicious: it was refusing because the *short* leg was
+unpriceable, not because the wing was missing — the FR-5.9 path was never
+reached. Rebuilt with a chain whose short leg is priced and whose lower strikes
+are removed, it now fails for the right reason and asserts on the words "naked
+short". Same shape as ISS-018: a check that reported the right answer for the
+wrong reason.
+
+**The quantity introspection had the same problem and was caught the same way.**
+The first version read `field.type`, which is a *string* in every module using
+`from __future__ import annotations` — so it saw one level and reported a clean
+sweep. It now resolves hints and descends through generics, reaching 15
+dataclasses, and proves itself against a planted nested `quantity` field in the
+same call. A detector that has never detected anything is not evidence.
+
+**Port additions** (both method-level, no new port, so 0.6 still reads 17/17):
+`BarStorePort.daily_bars` because closes alone cannot give an ATR, and
+`NewsStorePort.filings_for` because the fundamental agent asks about one name.
+
+Unrelated note for the next session: `verify 1_4`'s `close_matches_an_independent_endpoint`
+reads FAIL today (daily close ₹23,146.15 against live chain spot ₹23,119.00). That
+check compares a stored bar against a *live* feed, so it drifts with the market and
+is only meaningful on a trading day — nothing in 3.3 touches that path.
+
+Also tidied `ISSUES.md`: ISS-020 to ISS-025 had been appended below the
+`## Closed` heading, so the section the session protocol tells you to read as
+"open items only" was missing six open items. Moved, not rewritten.
+
+## 2026-10-19 (continued) — Step 3.4, scope decided before the code (rule 10)
+
+Three departures from `docs/10`'s task list, all in the same direction, all
+written here before anything was built.
+
+**1. No LangGraph.** `docs/10` names it. What 3.4 actually needs is a static
+six-node DAG with one fan-out, a typed state object, and a resume path — and the
+resume path we need is an unusual one (see 3 below), so the checkpointer that
+would be the main reason to take the dependency is the part we cannot use as
+shipped. Against that: LangGraph pulls `langchain-core` and its own checkpoint
+packages into a tree that is `mypy --strict` clean today, for a graph that is
+about 150 lines of plain Python. CLAUDE.md 4b says ship the version needing less
+thought. **The graph is behind one module (`agents/strategist/graph.py`), so
+swapping LangGraph in later changes one file** — if Ajay wants the named stack,
+say so and it is a contained change rather than a rewrite.
+
+**2. The fan-out is sequential, and the reason is the cap, not laziness.** The
+five specialists are independent — no node reads another's output — so the shape
+is a fan-out and the merge is deterministic. Running them on threads would buy
+milliseconds on four arithmetic agents, and would introduce a genuine hazard on
+the fifth: **two concurrent paid calls can both pass a cap check that neither
+would pass second**. `domain/llm_cost.check_cap` compares spend-so-far against
+an estimate, and spend-so-far is read before the call. Serialising the paid work
+is what makes the cap a limit rather than a race.
+
+**3. Resume is at the *paid* boundary, not the node boundary.** `docs/10` asks
+for per-node checkpointing so a crash resumes "without re-running completed
+nodes". Serialising each specialist's output would mean a codec per view type,
+and would buy nothing: those four nodes are arithmetic, and `verify 3_3`
+measured them byte-identical across three runs. What must never repeat is a
+**paid model call**. So a cycle records every node run (for the delegation tree,
+FR-4.3) and caches every model response against `(cycle_id, call_key)`; a
+resumed cycle re-runs the free work, replays the paid work at zero cost, and
+produces the identical result. The guarantee delivered is therefore "**a resumed
+cycle repeats no paid work and reaches the same answer**", which is stronger
+where it matters and weaker where it does not. Stated plainly rather than
+claimed as the literal wording of FR-4.12.
+
+**One thing added rather than removed: the strategist has an LLM node.** Exactly
+one, on the synthesis tier, called at most twice per cycle — only for ideas that
+have already passed every gate. It writes the thesis claim and the invalidation
+condition as prose and **can return nothing else**: no direction, no number, no
+level, no size. The gates decide; the model writes the sentence. This is what
+`docs/12`'s determinism boundary assumes when it says "the *prose* will differ;
+the **gate values must be identical**", and it is the first use of the Opus tier
+that step 3.1 built.
+
+**New, with the reason:**
+
+- `ports/cycle_store.py` — the durable memory of one cycle: node runs and
+  cached model responses. One port, because both answer "what has this cycle
+  already done?" and splitting them would mean two stores to keep consistent.
+- `domain/ranking.py` — ranking to at most two, deterministic, with the
+  tie-break explicit. **There is no evidence that this ordering is predictive**
+  and the module says so; it is a documented rule, not a model.
+- `domain/sessions.sessions_between` — the catalyst-recency gate counts trading
+  sessions, and the only calendar lives in `application/`, which agents may not
+  import. The pure function takes the holiday set as an argument.
+- `domain/call_identity.py` — one definition of "the same model call", shared by
+  the response cache and the recorded-cassette client, which had its own copy.
+- Migration **0007**: `cycle_nodes` and `cycle_responses`, append-only like the
+  journal and the ledger.
+
+## 2026-10-19 (continued) — Step 3.4 built: one cycle, six nodes, at most two ideas
+
+`verify 3_4`: **17 of 17.** `make check`: 906 passed (up from 849), 4 contracts
+kept, mypy clean. Migration **0007** applied.
+
+A full cycle now runs end to end against fakes: 2 articles → 1 story → 1
+candidate through 9 gates → 1 proposal, with a thesis, an invalidation, a stop,
+a target and every gate value attached.
+
+**The check worth reading is `different_prose_does_not_move_a_gate_value`.**
+`docs/12` asks for three identical runs; three identical runs only prove the
+code is deterministic. So there is a second, stronger form: run the same cycle
+with the model made to write **different wording about the same facts**, and
+require all nine gate values to be byte-identical while the claim changes. That
+is the actual invariant — the model cannot reach the decision path — and the
+weaker version would pass even if it could.
+
+**Resume is induced, not asserted.** The resumed graph's model has *nothing
+queued*, so any real call raises an AssertionError from `FakeLlm`. It does not
+raise: 3 paid calls on the first run, 3 replayed on the second, 3 ledger rows in
+total, identical proposal id and identical gate values. If the replay path broke,
+this check would fail loudly rather than quietly re-charging.
+
+**What the graph refuses, measured:**
+
+- `no ideas` carries a reason that counts the killers ("1 candidate(s), all
+  rejected: iv_rank (1)"), never a bare empty list (FR-4.9).
+- Three tradable names produce **two** proposals and one rejection with
+  `killed_by="rank"` — passing every gate and losing on rank is a different
+  thing from being killed, and it is shown as such (FR-4.10).
+- A single-publisher story **cannot become a thesis** (FR-4.6). On today's
+  archive — exchange filings nobody has reported on yet — this is the common
+  case, not the edge case, and it is worth expecting the briefing to be quiet
+  for that reason rather than for a bug.
+- An invented figure drops the idea and names the number. The synthesis model
+  wrote "rise 37%" in the fixture; `domain/grounding.py` caught the 37.
+- A ₹1 cap stops the cycle **before** the first node, with 0 calls made.
+
+**A third new finding, ISS-028, and it is the uncomfortable kind.** Two of Setup
+A's calendar inputs — the F&O ban list and the earnings calendar — have no source
+at all, and `SetupACandidate` types them as a plain `bool` and an optional date.
+So they default to `False` and `None`, which are the **permissive** answers: the
+calendar gate reports PASS on a banned symbol. This is the only fail-open input
+in the gate chain; everywhere else a missing input blocks. The mitigation is
+disclosure, not a fix — every cycle reports both as missing and `verify 3_4`
+fails if it stops.
+
+**Two things I got wrong building the test harness, both the same mistake.**
+The multi-symbol fixtures tagged every article `instrument_symbols=("RELIANCE",)`
+regardless of company, so the deduper — which partitions by symbol before it
+compares text — correctly merged six articles about three companies into one
+story. Then, with that fixed, the three stories still merged, because they were
+the same sentence with the company name swapped. Both times the code was right
+and the fixture was wrong, which is the good direction, but it is worth writing
+down that a templated fixture is a bad test of a deduper: it will either merge
+everything or nothing, and neither tells you about real copy.
+
+**Not built, with reasons:** no CLI command to run a cycle (step 3.5 delivers
+the briefing and will own the entry point), and the journal still has no table
+for rejected candidates — `FR-4.10` says rejections appear "in the briefing and
+the journal", and only the briefing half is reachable today. Noted here rather
+than widened into 3.4.
+
+## 2026-10-19 (continued) — Steps 3.5 and 3.6, scope decided before the code (rule 10)
+
+Built together because they are one loop: a briefing nobody answers is the
+failure `docs/10` calls "the weakest link in v1", so the thing that asks and the
+thing that listens are designed in one go.
+
+**Telegram confirmed as the surface**, after Ajay asked about a web app. The
+reasoning is in `docs/11` §1 and still holds: it pushes, it works on hotel wifi,
+it needs no auth or session handling, and the message trail *is* the audit
+trail. A read-only web dashboard stays where `docs/11` §4 puts it — v1.5, FR-15.
+
+**Decision 1: the reason is captured by `force_reply`, not by session state.**
+Telegram inline buttons cannot collect free text, so a tap has to be followed by
+a typed reason. The obvious design keeps "which idea is awaiting a reason" in
+memory, and loses it on every restart - silently, which is the worst way to lose
+a decision. Instead the prompt message carries the idea id in its own text and
+asks for a reply to itself; the user's reply quotes it, so the idea id comes back
+with the answer. **The message trail is the state**, which is exactly the
+property `docs/11` credits Telegram with. Nothing to persist, nothing to lose on
+a restart, and a decision made at 09:00 can still be answered at 14:00.
+
+**Decision 2: the briefing is more than one message, and the order is fixed.**
+`docs/12` asks for two things that fight on a phone - act on it without scrolling
+past the decision, *and* find every gate value. Telegram's limit is 4096
+characters and two ideas carry eighteen gate values between them. So the first
+message is the decision (market view, the ideas, their key numbers, the buttons)
+and the detail follows behind it. Splitting is the **adapter's** job, because
+4096 is a Telegram fact and the domain should not know it.
+
+**Decision 3: no hypothetical size until there is a capital figure.** FR-6.2
+wants the advisory risk gate's size in every briefing. The gate needs equity and
+`docs/07` is blank (ISS-022). Rather than default to a plausible number, the
+briefing prints "size unavailable: no capital figure (ISS-022)" and the section
+stays in place so the absence is visible every single morning. A new
+`config/risk.yaml` holds the figure with `verified: false`, so filling it in is
+one line in one file and the briefing starts showing sizes.
+
+**New, with the reason:**
+
+- `ports/chat.py` — `ChatPort`, the **inbound** half. `NotifierPort` is one-way
+  by design and 3.6 needs to listen. Long polling (`getUpdates`), not a webhook:
+  a webhook needs a public HTTPS endpoint, which is a server, a certificate and
+  an open port for a laptop that already reaches out fine.
+- `NotifierPort.ask_decision` — "ask the user to decide about this idea" is a
+  delivery-agnostic idea; inline keyboards are how Telegram spells it.
+- `domain/briefing.py` — the five sections of `docs/06` §3 as data plus a pure
+  renderer. No I/O, so the exact text is testable without a network.
+- `domain/capture.py` — encoding and parsing a decision, and the completeness
+  arithmetic ("you answered 4 of 5").
+- `config/risk.yaml` — see decision 3.
+
+**Not built:** `/kill` and `/flatten` (v2, there is no order path to kill),
+approval cards (v2), and the weekly performance report (FR-7.11, a SHOULD that
+belongs with calibration in 3.8).
+
+## 2026-10-19 (continued) — Steps 3.5 and 3.6 built: the briefing, and answering it
+
+`verify 3_5`: **11 of 13.** `verify 3_6`: **11 of 12.** `make check`: 966
+passed (up from 906), 4 contracts kept, mypy clean. **19 ports, 19 fakes.**
+
+The three failures are the three things that need Ajay rather than code: the
+Telegram credentials, one real briefing received, and ten answered briefings.
+
+**What the briefing measures today, from a real cycle:** all five sections
+present, 2,153 characters in total; the decision message is **614 characters
+over 12 lines** and carries the structure, the size line and the invalidation;
+all **9 gate values** survive the trip with their measured numbers; 2 evidence
+lines each with a publisher, a URL and a timestamp; cost ₹1.50 across 3 nodes.
+The detail fits one message today and splits automatically when it does not.
+
+**The size line is the part I expect to matter most.** With no capital figure
+it reads "unavailable - no capital figure in config/risk.yaml (ISS-022)", and
+it reads that **in the first message**, not in the detail. With ₹42,00,000
+configured the same briefing says "1 lot(s), risking ₹5,500 of a ₹10,500
+budget (advisory)". An absent number that is mentioned every morning gets
+filled in; one that silently disappears does not. `config/risk.yaml` is new and
+exists so filling it in is one line in one file.
+
+**Decision capture keeps no session state, and that is the whole design.** A
+tap sends a prompt whose *text* carries the idea id, and the reply quotes it
+back. So the message trail is the state: a restart between the tap and the
+reason loses nothing, and `verify 3_6` induces exactly that - a second
+`DecisionCapture` instance completing a tap the first one asked about, two
+hours later. The obvious design (a dictionary of who owes a reason) passes
+every test until the first restart and then drops a decision silently, which
+is the worst available failure for the one dataset this project is built to
+collect.
+
+**Measured, and worth keeping an eye on:** the longest button payload is **47
+bytes of Telegram's 64**, so all three actions fit with room. If a fourth
+action is ever added, that number is the constraint.
+
+**Plain text, no parse_mode.** MarkdownV2 wants `. - ( ) ! +` escaped and the
+briefing is made of them - "₹10,500.00", "0.52 x ATR", "(proxy)". One missed
+escape is an HTTP 400, which is a briefing that did not arrive, which is the
+single failure this step exists to prevent.
+
+**Rule 8 has a new sharp edge and it is now induced.** Telegram puts the bot
+token **in the URL path**, so any code that echoes a URL into a log or an
+exception leaks a credential. `TelegramClient` never includes the URL in an
+error - errors name the method - and both `verify 3_5` and the adapter tests
+assert the token does not appear in a refused call's message.
+
+**Two honest gaps the briefing now declares out loud:**
+
+- `UnlinkedBroker` - v1 has no broker sync (step 1.10) and every trade is
+  placed by hand, so the system genuinely does not know what is held. The
+  class is named for that, and every cycle wired to it adds a line to the
+  briefing's missing-inputs section. The dangerous version returns empty lists
+  and lets the briefing print "0 open positions", which is a claim about the
+  account rather than about our ignorance.
+- No IV rank is wired into `trading-desk brief` yet: `application.iv_rank`
+  needs the chain archive and wiring it belongs with the scheduler in 3.7.
+  Until then every idea dies at the volatility gate, visibly, in the rejected
+  list.
+
+**One thing the drill caught that the in-memory tests could not.** `verify 3_6`
+writes a real decision into `briefing_ideas` and `user_decisions` inside a
+rolled-back transaction, and the first two attempts were rejected - once for
+`used_iv_proxy` and once for `recorded_at`, both NOT NULL with no default. A
+decision that passes every in-memory test and then fails on a column type is a
+decision lost at 09:00 on a Monday, so the shape check earns its place.
+
+**Not built:** `/status` and `/why <idea_id>` (docs/11 §3 lists them for v1;
+they are read-only conveniences and neither blocks capture), the weekly
+performance report (FR-7.11, a SHOULD that belongs with calibration in 3.8),
+and anything from the v2 column.

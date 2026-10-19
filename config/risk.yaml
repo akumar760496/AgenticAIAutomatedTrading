@@ -1,0 +1,26 @@
+# Account and portfolio limits. CLAUDE.md rule 7: these are numbers about your
+# account, not facts about the code, so they live here with a provenance note.
+#
+# verified: false — and the one that matters is blank. Until `equity_rupees` is
+# set, the briefing prints "size unavailable: no capital figure (ISS-022)" in
+# place of a hypothetical position size, every morning, rather than defaulting
+# to a plausible figure. A default here would be a number nobody chose
+# appearing in a risk calculation, which is the one place it must never happen.
+#
+# Context for choosing it (ISS-022): flat 0.25% risk plus NSE lot sizes implies
+# a floor. A NIFTY debit spread risking ₹140 per unit x 75 to a lot is ₹10,500
+# per lot, which needs ₹42,00,000 of equity before the gate will allow one lot.
+# Below that the gate correctly returns zero and no idea is ever tradable.
+verified: false
+effective_from: 2026-10-19
+source: "docs/07-stop-criteria.md section on capital — currently blank"
+
+# Your trading capital, in rupees. Leave null until you have decided it.
+equity_rupees: null
+
+# Portfolio limits, as fractions of equity. These are the risk gate's inputs and
+# they are placeholders from docs/01 section 4 until you sign them off.
+max_symbol_exposure_fraction: 0.05
+max_portfolio_heat_fraction: 0.025
+daily_loss_limit_fraction: 0.01
+max_trades_per_day: 3

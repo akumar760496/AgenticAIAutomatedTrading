@@ -4,6 +4,10 @@
     uv run trading-desk snapshot   # authenticate, capture once, exit
     uv run trading-desk login      # re-authenticate deliberately
     uv run trading-desk survey     # measure every F&O chain, rebuild the universe
+    uv run trading-desk brief      # run one research cycle and send the briefing
+    uv run trading-desk capture    # record decisions waiting in Telegram
+    uv run trading-desk nag        # chase unanswered ideas (after 10:00 IST)
+    uv run trading-desk telegram-check   # prove delivery before 08:15 depends on it
 
 Starting the app authenticates it. A browser opens only when there is no usable
 token, so the first run of the day may ask for a login and every run after that
@@ -57,9 +61,20 @@ from trading_desk.application.universe_builder import (
 )
 from trading_desk.domain.liquidity import rank_by_liquidity
 from trading_desk.domain.news import filing_as_article
-from trading_desk.infra.config import load_app_settings, load_dhan_settings, load_infra_settings
+from trading_desk.infra.config import (
+    load_app_settings,
+    load_dhan_settings,
+    load_infra_settings,
+    load_telegram_settings,
+)
 from trading_desk.infra.db import create_db_engine, create_session_factory
 from trading_desk.infra.logging import configure_logging, register_secret
+from trading_desk.interfaces.briefing_cli import (
+    run_briefing,
+    run_capture_once,
+    run_nag,
+    run_telegram_check,
+)
 from trading_desk.ports.notifier import AlertLevel
 
 # Three captures a session. Open, midday and just before close, so the IV series
@@ -269,31 +284,68 @@ def _write_label_sheet() -> int:
     return 0
 
 
+# Commands that talk to the chat and the database, and never to the broker.
+CHAT_COMMANDS = ("telegram-check", "capture", "nag")
+
+
+def _run_chat_command(command: str) -> int:
+    """Telegram-only commands. No Dhan credentials are loaded or needed."""
+    telegram = load_telegram_settings()
+    register_secret(telegram.bot_token)
+    if command == "telegram-check":
+        return run_telegram_check()
+    if command == "capture":
+        return run_capture_once()
+    return run_nag()
+
+
+def _run_brief() -> int:
+    """The briefing needs both: a broker for chains and a chat to deliver to."""
+    register_secret(load_telegram_settings().bot_token)
+    return run_briefing()
+
+
+def _login(force: bool) -> int:
+    settings = load_dhan_settings()
+    grant = ensure_valid_token(settings, force=force)
+    log.info("Authenticated. Token valid for %.1f hours.", hours_remaining(grant))
+    return 0
+
+
 def main() -> int:
     command = sys.argv[1] if len(sys.argv) > 1 else "run"
 
-    # Before the Dhan settings load: this one needs a database, not a broker.
+    # Before the Dhan settings load: these need a database or a chat, not a
+    # broker. A command that asks for trading credentials it does not use is a
+    # command that cannot be run on a laptop without them.
     if command == "label-news":
         configure_logging(load_app_settings().log_level)
         return _write_label_sheet()
+    if command in CHAT_COMMANDS:
+        configure_logging(load_app_settings().log_level)
+        return _run_chat_command(command)
 
     settings = load_dhan_settings()
     register_secret(settings.api_secret)
     configure_logging(load_app_settings().log_level)
 
-    if command == "login":
-        grant = ensure_valid_token(settings, force="--force" in sys.argv)
-        log.info("Authenticated. Token valid for %.1f hours.", hours_remaining(grant))
-        return 0
-    if command == "snapshot":
-        return _run_capture()
-    if command == "survey":
-        return _run_survey()
-    if command == "run":
-        return _start_scheduler()
+    handlers = {
+        "login": lambda: _login(force="--force" in sys.argv),
+        "snapshot": _run_capture,
+        "survey": _run_survey,
+        "run": _start_scheduler,
+        "brief": _run_brief,
+    }
+    handler = handlers.get(command)
+    if handler is not None:
+        return handler()
 
     print(f"Unknown command: {command}", file=sys.stderr)
-    print("Usage: trading-desk [run|snapshot|login|survey|label-news]", file=sys.stderr)
+    print(
+        "Usage: trading-desk "
+        "[run|snapshot|login|survey|label-news|brief|capture|nag|telegram-check]",
+        file=sys.stderr,
+    )
     return 2
 
 

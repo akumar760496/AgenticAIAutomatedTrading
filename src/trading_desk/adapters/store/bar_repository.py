@@ -14,14 +14,27 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import date
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
+from trading_desk.domain.enums import Exchange, Segment
+from trading_desk.domain.instruments import InstrumentRef
 from trading_desk.domain.market import Bar
 from trading_desk.domain.timezones import to_ist
-from trading_desk.domain.values import PAISE_PER_RUPEE
+from trading_desk.domain.values import PAISE_PER_RUPEE, Price
 from trading_desk.infra.db import session_scope
+
+SELECT_RECENT_BARS = text(
+    """
+    SELECT security_id, bar_start, open_paise, high_paise, low_paise, close_paise, volume
+    FROM bars_1d
+    WHERE instrument_symbol = :symbol
+    ORDER BY bar_start DESC
+    LIMIT :limit
+    """
+)
 
 INSERT_BAR = text(
     """
@@ -104,6 +117,17 @@ class PostgresBarStore:
         # returned date the trading date rather than the UTC calendar date.
         return [to_ist(row[0]).date() for row in rows]
 
+    def daily_bars(self, symbol: str, limit: int) -> list[Bar]:
+        """The most recent `limit` bars, oldest first.
+
+        `ORDER BY ... DESC LIMIT n` then reverse, rather than reading the whole
+        series and slicing: the point of the limit is to avoid pulling 940 rows
+        to compute a 14-period ATR.
+        """
+        with session_scope(self._factory) as session:
+            rows = session.execute(SELECT_RECENT_BARS, {"symbol": symbol, "limit": limit}).all()
+        return [_to_bar(symbol, row) for row in reversed(rows)]
+
 
 def _count(session: Session, symbol: str) -> int:
     result = session.execute(
@@ -111,3 +135,31 @@ def _count(session: Session, symbol: str) -> int:
         {"symbol": symbol},
     ).scalar_one()
     return int(result)
+
+
+def _to_bar(symbol: str, row: Any) -> Bar:
+    """Rebuild a Bar from a bars_1d row.
+
+    The table stores the symbol and the security id, not the exchange, segment
+    or lot size, so those three are reconstructed. **The lot size here is a
+    placeholder and nothing may size from it** - sizing reads the instrument
+    master, which is the only authoritative source for it. Nothing in
+    `domain/indicators.py` touches the instrument beyond its symbol, which is
+    why rebuilding a partial ref is safe for this one path.
+    """
+    security_id, start, open_paise, high_paise, low_paise, close_paise, volume = row
+    instrument = InstrumentRef(
+        symbol=symbol,
+        exchange=Exchange.NSE,
+        segment=Segment.EQUITY,
+        security_id=str(security_id),
+    )
+    return Bar(
+        instrument=instrument,
+        start=start,
+        open=Price(paise=int(open_paise)),
+        high=Price(paise=int(high_paise)),
+        low=Price(paise=int(low_paise)),
+        close=Price(paise=int(close_paise)),
+        volume=int(volume),
+    )

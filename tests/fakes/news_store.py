@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import date, datetime
 
 from trading_desk.domain.news import Filing, NewsArticle
+from trading_desk.domain.timezones import to_ist
 
 
 class FakeNewsStore:
@@ -64,3 +65,18 @@ class FakeNewsStore:
             self.filings.values(), key=lambda filing: (filing.filed_at, filing.filing_id)
         )
         return ordered[:limit]
+
+    def filings_for(self, symbol: str, since: date, limit: int) -> list[Filing]:
+        """One symbol's filings from `since` onward, oldest first.
+
+        The date comparison is made on the IST trading date, because that is
+        what the real store compares against. A fake that compares UTC dates
+        would pass tests the Postgres version fails.
+        """
+        matching = [
+            filing
+            for filing in self.filings.values()
+            if filing.symbol == symbol and to_ist(filing.filed_at).date() >= since
+        ]
+        matching.sort(key=lambda filing: (filing.filed_at, filing.filing_id))
+        return matching[:limit]

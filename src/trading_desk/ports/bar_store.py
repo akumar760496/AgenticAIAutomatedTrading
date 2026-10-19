@@ -37,3 +37,16 @@ class BarStorePort(Protocol):
     def daily_bar_dates(self, symbol: str) -> list[date]:
         """Trading dates held for this symbol, oldest first."""
         ...
+
+    def daily_bars(self, symbol: str, limit: int) -> list[Bar]:
+        """The most recent `limit` bars, returned **oldest first**.
+
+        Closes alone cannot give an ATR, a true range or a volume ratio, all of
+        which the technical agent needs, so the full OHLCV row has to come back.
+
+        The ordering is the part worth stating: `limit` counts back from the
+        latest bar, but the list reads forward in time, because every indicator
+        in `domain/indicators.py` assumes chronological order and a reversed
+        series produces a plausible number rather than an error.
+        """
+        ...

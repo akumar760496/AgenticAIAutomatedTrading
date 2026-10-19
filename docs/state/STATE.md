@@ -5,12 +5,23 @@
 ---
 
 **Updated:** 2026-10-19
-**Phase:** 0, 1 and 2 complete. **Phase 3: 3.1 and 3.2 done.** Next is 3.3, the other four specialists.
+**Phase:** 0, 1 and 2 complete. **Phase 3: 3.1 to 3.6 done.** Next is 3.7, the scheduler.
 **Package name:** `trading_desk` (decided 2026-10-15)
 
-**Six things are waiting on you: ISS-021 (delta bands), ISS-022 (capital figure),
-one real contract note, the LLM monthly cap, 200 hand-labelled news items, and
-ISS-025 — the one that actually matters.**
+**Nine things are waiting on you: ISS-021 (delta bands), ISS-022 (capital figure),
+one real contract note, the LLM monthly cap, 200 hand-labelled news items, ISS-026
+(pledge data), ISS-027 (sector map), ISS-028 (the F&O ban list, the only fail-open
+input in the gate chain), and ISS-025 — still the one that matters most.**
+
+**Three things now stand between you and a real briefing on your phone:** a
+Telegram bot token and chat id, the `ANTHROPIC_API_KEY`, and a capital figure in
+`config/risk.yaml`. The first two are blockers; the third only costs you the size
+line, which currently reads "unavailable (ISS-022)" every morning by design.
+
+**A decision for you on the stack:** `docs/10` names **LangGraph** for the
+strategist graph and I did not use it — the graph is a static six-node DAG and
+plain Python kept the tree `mypy --strict` clean. It is behind one module, so
+swapping LangGraph in is a contained change. Say if you want it (DEVLOG 3.4).
 
 **ISS-025 is the significant one.** Stored filings are subject lines, not content
 (mean body 144 characters), so `EARNINGS_SURPRISE` and `GUIDANCE_CHANGE` — the two
@@ -48,26 +59,59 @@ the next data step.
   Plus `domain/filing_subjects.py`: NSE's own subject vocabulary settles **60% of
   filings with no model call** (measured over 1,542).
 
+- **Step 3.3** — the other four specialists. Fundamental (a veto table over the
+  exchange's subject vocabulary), Technical (four registered signals, **0 backtested**,
+  and it says so), Options Strategist (the `docs/02` volatility matrix encoded, not
+  prompted), Portfolio Context. **None of the four makes a model call** — they are
+  arithmetic, and the DEVLOG says why. Verified **15/15**, including `docs/12`'s
+  determinism check run early: 4 specialists x 3 runs, every measured value identical.
+
+- **Step 3.4** — the Chief Strategist graph. One cycle, six nodes, one `cycle_id`
+  on every artifact; at most two proposals; "no ideas" with a counted reason; every
+  rejection carrying the gate that killed it; append-only checkpoints (migration 0007)
+  and a response cache so a **resumed cycle repeats no paid work**. One LLM node
+  (synthesis, Opus tier) that writes prose and can return nothing else. Verified
+  **17/17**, including the strong form of `docs/12`'s determinism check: different
+  prose about the same facts, nine gate values unchanged.
+
+- **Steps 3.5 and 3.6** — the briefing and answering it. Five sections rendered
+  from a real cycle (decision message **614 chars / 12 lines**, all **9 gate values**
+  in the detail, evidence with URLs and timestamps, cost per node); Telegram adapter
+  with splitting, retries and **the bot token kept out of every error** (it is in the
+  URL path); decision capture whose state is the message trail, so a restart between
+  the tap and the reason loses nothing; the 10:00 nag, one message however many ideas.
+  Verified **11/13** and **11/12** — every failure is a credential or a real send.
+
 ## Next action
 
-**Your turn first, and this is the long pole.** Run:
+**Four things from you, in the order that unblocks the most:**
+
+1. **A Telegram bot token and chat id.** Message `@BotFather` on Telegram, send
+   `/newbot`, follow it, and paste the token into `.env` as `TELEGRAM_BOT_TOKEN`.
+   Then message your own new bot once (anything), and run:
+   ```
+   uv run trading-desk telegram-check
+   ```
+   If `TELEGRAM_CHAT_ID` is still blank it will tell you; the id is the number in
+   `https://api.telegram.org/bot<token>/getUpdates` after you have messaged the bot.
+2. **`ANTHROPIC_API_KEY` in `.env`**, and a real monthly cap in
+   `config/llm_pricing.yaml` (item 5 below). No cycle runs without the key.
+3. **A capital figure** in `config/risk.yaml` (`equity_rupees`). Everything works
+   without it; the briefing just says the size is unavailable, every morning.
+4. **The 200 labels** — still the long pole, and **decide ISS-025 first**.
+
+Then:
 
 ```
-uv run trading-desk label-news --count 200
+uv run trading-desk brief      # one cycle, delivered
+uv run trading-desk capture    # record whatever you answered
+uv run trading-desk nag        # chase anything unanswered after 10:00 IST
 ```
 
-It writes `data/labels/news_catalysts.csv` from the real archive. Fill in the
-`true_label` column with one of the seven catalyst types or `NONE`. **Most rows are
-NONE — that is expected and correct.** `docs/10` flags this as the step most likely
-to slip. Until it exists, `verify 3_2` cannot close and 3.3 onward is building on an
-unmeasured classifier.
-
-**Then step 3.3 — the other four specialists** (fundamental, technical/quant, options
-strategist, portfolio context). That one does not depend on the labels, so I can build
-it while you label.
-
-Before any live model call, set **`ANTHROPIC_API_KEY`** in `.env` and give me a real
-monthly cap (see item 1 below).
+**Then step 3.7 — the scheduler**, which runs the three commands above on a
+timetable (08:15 brief, 10:00 nag, a capture loop) and wires the IV-rank service
+into the cycle. Until 3.7 the briefing has no IV rank, so every idea dies at the
+volatility gate — visibly, in the rejected list.
 
 Unrelated and still outstanding from Phase 1, whenever a trading day allows:
 
@@ -77,8 +121,8 @@ make verify STEP=1_1b           # the live capture check
 ```
 
 The survey refuses to run on a weekend or holiday (ISS-006: the feed serves the
-previous session's volume without saying so). `make login` only if the token has aged
-out.
+previous session's volume without saying so). `make login` only if the token has
+aged out.
 
 ## Blocked on you
 
@@ -103,6 +147,26 @@ out.
    `true_label` column. 40 of them, chosen by a stable hash rather than by me, are
    held out and neither of us looks at them while tuning. `verify 3_2` fails on this
    and on the 90% score it gates.
+4c. **ISS-026 — the Fundamental agent cannot see promoter pledge or sell-down.**
+   Measured: 0 of 1,542 filings mention pledge, encumbrance or promoter. They are
+   filed under SEBI SAST/PIT on an NSE endpoint we do not poll. My recommendation:
+   add that poller after the filing PDFs — same crawler, different path, free.
+4d. **ISS-027 — no sector map exists**, so correlated names cannot be detected.
+   My recommendation: use NSE's own sectoral index membership (NIFTY BANK, NIFTY IT,
+   …). One config file with a source URL, and it is the definition the market trades.
+4f. **ISS-028 — the F&O ban list and the earnings calendar have no source**, and
+   both default to the permissive answer, so Setup A's calendar gate passes a banned
+   symbol. The only fail-open input in the gate chain. My recommendation: fetch the
+   ban list — published daily, free, one more poller of the kind 1.5 already has.
+4g. **A Telegram bot token and your chat id** — see item 1 under Next action.
+4h. **A capital figure in `config/risk.yaml`** (ISS-022 again, now with one place
+   to put it). Without it every briefing prints "size unavailable" where FR-6.2
+   wants a lot count. With ₹42,00,000 the same idea reads "1 lot(s), risking
+   ₹5,500 of a ₹10,500 budget".
+4e. **Two numbers `config/setups.yaml` does not have.** Setup B's *debit* variant has
+   no delta bands (the agent refuses that path rather than borrowing Setup A's), and a
+   credit spread's wing offset is a constructor argument pending your sign-off — it
+   decides the max loss.
 5. **The monthly LLM cap, and the FX rate** (`config/llm_pricing.yaml`,
    `verified: false`). ₹2,000/month and 89 INR/USD are both placeholders. The rate
    that matters is the one your card is actually billed at, including the bank's
@@ -155,12 +219,12 @@ out.
 | 0.3 config & secrets | PASS 7/7 | |
 | 0.4 value objects | PASS 10/10 | clock check is an AST walk |
 | 0.5 infrastructure | PASS 8/8 | compares against the head revision |
-| 0.6 ports & fakes | PASS 6/6 | **17 ports, 17 fakes** (ledger + tracer added in 3.1) |
+| 0.6 ports & fakes | PASS 6/6 | **19 ports, 19 fakes** (`CycleStore` 3.4, `ChatPort` 3.6) |
 | 1.1a chain adapter | PASS 5/5 | live NIFTY chain, 235 strikes, greeks present |
 | 1.1b archive & snapshotter | **7 of 8** | `live_capture` needs a trading day |
 | 1.2 universe service | **6 of 7** | `thresholds_reviewed` needs your sign-off |
 | 1.3a schema & bar builder | PASS 8/8 | |
-| 1.4 historical backfill | PASS 8/8 | 940 daily bars/name; close agrees with chain spot |
+| 1.4 historical backfill | **7 of 8** | `close_matches_an_independent_endpoint` compares a stored bar against a **live** spot, so it drifts off a trading day |
 | 1.5a exchange filings | PASS 8/8 | 1,538 filings stored live from NSE, free |
 | 1.5b news articles | PASS 7/7 | 25 SEBI articles live; 5 guards induced. RBI excluded |
 | 1.6 calendars | PASS 6/6 | expiry list audits the holiday file; found Guru Nanak missing |
@@ -177,8 +241,12 @@ out.
 | 2.8 costs & dry run | **8 of 9** | lookahead induced; `contract_note` pending (**ISS-023**) |
 | 3.1 LLM adapter & cap | **10 of 11** | ₹1 cap blocks with the client never reached; `rates_reconciled` pending |
 | 3.2 news agent | **12 of 14** | injection induced in 3 forms; subject router settles 60% of filings; **labels pending** |
+| 3.3 four specialists | PASS 15/15 | determinism induced (3 runs identical); naked short and the size-field detector both induced |
+| 3.4 strategist graph | PASS 17/17 | resume induced (0 new calls, same answer); reworded prose moves no gate value; checkpoints append-only |
+| 3.5 briefing & delivery | **11 of 13** | 9 gate values survive; token-leak induced; `telegram_credentials`, `real_briefing` pending |
+| 3.6 decision capture | **11 of 12** | restart-between-tap-and-reason induced; journal shape drilled and rolled back; **0 of 10** briefings answered |
 
-`make check`: **771 passed, 4 contracts kept, mypy --strict clean.**
+`make check`: **966 passed, 4 contracts kept, mypy --strict clean.**
 
 **Note on reading this table:** the runner used to print `FAIL (1 of 7)` meaning *one
 failed*. Both result lines now count passes (ISS-017).

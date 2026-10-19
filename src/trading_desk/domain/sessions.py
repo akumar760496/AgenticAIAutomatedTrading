@@ -74,3 +74,43 @@ def bar_start(moment: datetime, interval_minutes: int, session: TradingSession) 
     elapsed = int((moment - session.opens_at).total_seconds() // 60)
     whole_bars = elapsed // interval_minutes
     return session.opens_at + timedelta(minutes=whole_bars * interval_minutes)
+
+
+SATURDAY = 5
+SUNDAY = 6
+
+
+def is_trading_day(day: date, holidays: frozenset[date]) -> bool:
+    """Weekday and not a listed holiday.
+
+    Duplicates `application.calendars.TradingCalendar.is_trading_day` in
+    behaviour but not in ownership: the calendar *file* and its provenance stay
+    in the application layer, and this takes the resulting dates as an
+    argument. Agents may not import `application`, and the catalyst-recency
+    gate counts sessions.
+    """
+    if day.weekday() in (SATURDAY, SUNDAY):
+        return False
+    return day not in holidays
+
+
+def sessions_between(earlier: date, later: date, holidays: frozenset[date]) -> int:
+    """Trading sessions strictly after `earlier`, up to and including `later`.
+
+    So a Friday evening filing read on Monday is **one** session old, not three
+    days old - which is the distinction `config/setups.yaml` means by
+    `max_sessions_since_catalyst: 2`.
+
+    Returns 0 when `later` is not after `earlier`; a negative answer would mean
+    a catalyst from the future, and the caller should see zero rather than a
+    number that silently passes a recency check.
+    """
+    if later <= earlier:
+        return 0
+    count = 0
+    day = earlier + timedelta(days=1)
+    while day <= later:
+        if is_trading_day(day, holidays):
+            count += 1
+        day += timedelta(days=1)
+    return count

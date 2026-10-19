@@ -8,7 +8,7 @@ loses anything that arrived late. Re-ingesting must be free.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import date, datetime
 from typing import Protocol
 
 from trading_desk.domain.news import Filing, NewsArticle
@@ -50,4 +50,13 @@ class NewsStorePort(Protocol):
 
     def all_filings(self, limit: int) -> list[Filing]:
         """Stored filings, oldest first. Same reasoning as `all_articles`."""
+        ...
+
+    def filings_for(self, symbol: str, since: date, limit: int) -> list[Filing]:
+        """One company's filings on or after `since`, oldest first.
+
+        The fundamental agent asks about one name at a time. Without this it
+        would have to read the whole archive and filter in Python, which works
+        on 1,542 rows and stops working somewhere well before it is noticed.
+        """
         ...

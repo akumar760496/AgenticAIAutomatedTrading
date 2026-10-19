@@ -12,6 +12,14 @@ design:
    tokens on some failure modes, and a trace that only holds successes hides
    exactly the runs worth reading.
 
+Step 3.4 added a fourth thing, in front of all three: **if this cycle has
+already made this exact call, replay the stored reply and charge nothing.**
+That is what makes a crashed cycle resumable without paying twice. It is
+checked before the cap, because a replay spends nothing and refusing it on
+budget grounds would make a resume impossible precisely when the month is
+tight. The cache is scoped to one `cycle_id`, so it can only ever replay
+interrupted work - never recycle yesterday's judgement (`ports/cycle_store.py`).
+
 Agents are handed this class, never a raw client. That is enforced by
 construction rather than by a rule: nothing else builds an Anthropic client.
 """
@@ -23,6 +31,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
+from trading_desk.domain.call_identity import call_key
 from trading_desk.domain.llm_cost import (
     CapVerdict,
     LlmPricing,
@@ -34,7 +43,8 @@ from trading_desk.domain.llm_cost import (
 from trading_desk.domain.timezones import to_ist
 from trading_desk.domain.values import Money
 from trading_desk.ports.clock import Clock
-from trading_desk.ports.llm import LlmPort, LlmResult
+from trading_desk.ports.cycle_store import CachedResponse, CycleStore
+from trading_desk.ports.llm import LlmPort, LlmResult, LlmUsage
 from trading_desk.ports.llm_ledger import LedgerEntry, LlmLedger
 from trading_desk.ports.tracing import Tracer, TraceSpan
 
@@ -73,17 +83,23 @@ class CostGovernedLlm:
 
     def __init__(
         self,
+        *,
         client: LlmPort,
         ledger: LlmLedger,
         pricing: LlmPricing,
         clock: Clock,
         tracer: Tracer | None = None,
+        cycles: CycleStore | None = None,
     ) -> None:
         self._client = client
         self._ledger = ledger
         self._pricing = pricing
         self._clock = clock
         self._tracer = tracer
+        # Optional: without it the governor behaves exactly as it did in 3.1,
+        # which is what the step 3.1 tests and `verify 3_1` still exercise.
+        self._cycles = cycles
+        self.replayed_calls = 0
 
     def spend_this_month(self) -> Money:
         """Spend so far in the current IST calendar month."""
@@ -110,11 +126,16 @@ class CostGovernedLlm:
         response_model: type[T],
     ) -> LlmResult[T]:
         """Make one governed call. Raises `MonthlyCapExceededError` if it would not fit."""
+        model = self._pricing.model_for(tier)
+
+        replayed = self._replay(cycle_id, model, system_prompt, user_content, response_model)
+        if replayed is not None:
+            return replayed
+
         verdict = self.budget_check(tier, system_prompt, user_content)
         if not verdict.allowed:
             raise MonthlyCapExceededError(verdict)
 
-        model = self._pricing.model_for(tier)
         started_at = self._clock.utc_now()
         try:
             result = self._client.complete(
@@ -135,7 +156,72 @@ class CostGovernedLlm:
             result=result,
             started_at=started_at,
         )
+        self._cache(
+            node=node,
+            cycle_id=cycle_id,
+            model=model,
+            system_prompt=system_prompt,
+            user_content=user_content,
+            result=result,
+        )
         return result
+
+    def _replay[T: BaseModel](
+        self,
+        cycle_id: str,
+        model: str,
+        system_prompt: str,
+        user_content: str,
+        response_model: type[T],
+    ) -> LlmResult[T] | None:
+        """This cycle's stored reply for this exact call, if there is one.
+
+        Costs nothing and records nothing. A replay that wrote a ledger row
+        would make a resumed cycle look like it had spent the money twice, and
+        the ledger is what the cap is enforced against.
+        """
+        if self._cycles is None:
+            return None
+        stored = self._cycles.cached_response(
+            cycle_id, call_key(model, system_prompt, user_content)
+        )
+        if stored is None:
+            return None
+
+        self.replayed_calls += 1
+        return LlmResult(
+            value=response_model.model_validate_json(stored.payload),
+            usage=LlmUsage(
+                model=stored.model,
+                input_tokens=stored.input_tokens,
+                output_tokens=stored.output_tokens,
+                cost=Money.zero(),
+            ),
+        )
+
+    def _cache[T: BaseModel](
+        self,
+        *,
+        node: str,
+        cycle_id: str,
+        model: str,
+        system_prompt: str,
+        user_content: str,
+        result: LlmResult[T],
+    ) -> None:
+        if self._cycles is None:
+            return
+        self._cycles.save_response(
+            CachedResponse(
+                cycle_id=cycle_id,
+                node=node,
+                call_key=call_key(model, system_prompt, user_content),
+                model=model,
+                payload=result.value.model_dump_json(),
+                input_tokens=result.usage.input_tokens,
+                output_tokens=result.usage.output_tokens,
+            )
+        )
 
     def cost_report(self, cycle_id: str) -> CycleCostReport:
         """Cost per node for one cycle, read back from the ledger.

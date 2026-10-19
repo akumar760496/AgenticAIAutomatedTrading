@@ -44,3 +44,8 @@ class FakeBarStore:
             (day, bar) for (stored, day), bar in self.bars.items() if stored == symbol
         )
         return [(day, bar.close.rupees()) for day, bar in matching]
+
+    def daily_bars(self, symbol: str, limit: int) -> list[Bar]:
+        """The last `limit` bars, oldest first - the same order as the real store."""
+        ordered = [bar for (stored, _), bar in sorted(self.bars.items()) if stored == symbol]
+        return ordered[-limit:]

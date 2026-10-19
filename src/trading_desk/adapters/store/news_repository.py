@@ -13,7 +13,7 @@ worth investigating, not a row to silently overwrite.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import date, datetime, time
 from typing import Any
 
 from sqlalchemy import text
@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from trading_desk.domain.dedup import content_hash
 from trading_desk.domain.enums import SourceTier
 from trading_desk.domain.news import Filing, NewsArticle
+from trading_desk.domain.timezones import IST
 from trading_desk.domain.untrusted import inspect
 from trading_desk.infra.db import session_scope
 
@@ -69,6 +70,17 @@ SELECT_FILINGS = text(
     """
     SELECT filing_id, symbol, subject, body, url, filed_at, ingested_at
     FROM filings
+    ORDER BY filed_at, filing_id
+    LIMIT :limit
+    """
+)
+
+
+SELECT_FILINGS_FOR_SYMBOL = text(
+    """
+    SELECT filing_id, symbol, subject, body, url, filed_at, ingested_at
+    FROM filings
+    WHERE symbol = :symbol AND filed_at >= :since
     ORDER BY filed_at, filing_id
     LIMIT :limit
     """
@@ -163,6 +175,25 @@ class PostgresNewsStore:
     def all_filings(self, limit: int) -> list[Filing]:
         with session_scope(self._factory) as session:
             rows = session.execute(SELECT_FILINGS, {"limit": limit}).mappings().all()
+        return [_to_filing(dict(row)) for row in rows]
+
+    def filings_for(self, symbol: str, since: date, limit: int) -> list[Filing]:
+        """One company's filings from `since` onward, oldest first.
+
+        `since` is a trading date; the column is a timestamp, so it is widened
+        to midnight IST rather than midnight UTC. Comparing a date against a UTC
+        timestamp would silently drop the first five and a half hours of the day.
+        """
+        start = datetime.combine(since, time.min, tzinfo=IST)
+        with session_scope(self._factory) as session:
+            rows = (
+                session.execute(
+                    SELECT_FILINGS_FOR_SYMBOL,
+                    {"symbol": symbol, "since": start, "limit": limit},
+                )
+                .mappings()
+                .all()
+            )
         return [_to_filing(dict(row)) for row in rows]
 
     def count_filings(self, symbol: str | None = None) -> int:

@@ -319,6 +319,198 @@ logged and work continues — no drive-by fixes inside a step.
   induced against a temporary config, never the live one.
 - **Status:** closed · **Owner:** me
 
+
+### ISS-020 — A TimescaleDB restore failed once and will not reproduce
+- **Found:** 2026-10-18, step 1.9, on the first restore drill ever run
+- **Severity:** unknown, which is the problem
+- **Symptom:** `pg_restore` of a `pg_dump` taken minutes earlier aborted with
+  ```
+  COPY failed for table "metadata":
+  duplicate key value violates unique constraint "metadata_pkey"
+  Key (key)=(exported_uuid) already exists
+  ```
+- **What fixed it:** TimescaleDB's documented restore procedure — `CREATE EXTENSION`,
+  `timescaledb_pre_restore()`, restore, `timescaledb_post_restore()`.
+- **Why it is open rather than closed:** inducing the guard afterwards showed the naive
+  path succeeding against **the same dump that produced the failure**, and against all
+  five dumps taken that day. The failure is real (the error text is verbatim) but not
+  reproducible, so the mechanism is unknown. A plausible story — that `exported_uuid` is
+  written into the source catalogue by `pg_dump` and then re-inserted by the restore —
+  does not survive the fact that the same dump restores cleanly now.
+- **My error, recorded because it is the instructive part:** I wrote "the TimescaleDB
+  dance is mandatory, not optional" and "every backup taken before today would have been
+  worthless" into the adapter docstring, from a single observation. Both claims were
+  unsupported. The induction is the only reason they did not stay in the repo.
+- **Current position:** the pre/post restore calls stay — cheap, documented, harmless, and
+  the one time it mattered it mattered completely. The *claim* that they are required has
+  been removed from the code and from `docs/15`.
+- **What would close this:** a reproduction. Most likely candidate to try is a dump taken
+  from a database that has never been dumped before, restored into a database created
+  before the extension exists. Worth ten minutes the next time the schema changes.
+- **Status:** open · **Owner:** me
+
+### ISS-021 — Setup A's delta bands are unsatisfiable on most real NSE chains
+- **Found:** 2026-10-19, step 2.5, running the structure builder against archived chains
+- **Severity:** **high.** Setup A cannot produce a structure for 15 of 25 universe names,
+  so the setup would almost never fire — and would look like a working system doing it
+- **Measured, on 25 real chains captured 2026-10-16 at 11 DTE:**
+  **10 of 25** have a strike in *both* the long band (delta 0.50–0.55) and the short band
+  (0.25–0.30). No structure is buildable for ADANIENT, BHARTIARTL, COALINDIA, HINDUNILVR,
+  INFY, ITC, KOTAKBANK, LT, M&M, NTPC, RELIANCE, SBIN, SUNPHARMA, TATASTEEL or TCS.
+- **Why:** NSE strike spacing is coarse relative to a 0.05-wide delta band. Delta steps
+  straight over the band between adjacent strikes — on the NIFTY weekly it goes 0.73 →
+  **0.55** → 0.41, skipping 0.25–0.30 entirely. Compounding it, only 15–47 of each chain's
+  strikes carry a delta at all; the rest come back null from the feed.
+- **Why it matters now rather than at 2.8:** `docs/10`'s Phase 2 exit says "If the dry run
+  shows the setups almost never fire, fix that now — it's a threshold problem, and
+  discovering it after the agents are built means rebuilding them." The archived chains
+  make the discovery available today, before any agent exists.
+- **Options, none taken yet — this is a rulebook change and so the user's call:**
+  1. **Widen the bands** (0.45–0.60 long, 0.20–0.35 short). Simplest, and changes the
+     risk profile of every structure.
+  2. **Select the nearest strike to a delta target** rather than requiring band
+     membership, with a documented maximum deviation. Keeps intent, always yields a
+     structure where the chain is liquid at all.
+  3. **Select by moneyness** (% from spot) instead of delta, with delta reported.
+  4. Accept a much smaller tradable universe per day.
+- **My recommendation: option 2.** "Closest to 0.525, reject beyond 0.45–0.60" preserves
+  the rulebook's intent and degrades honestly on a coarse chain, rather than silently
+  trading a different structure from the one specified.
+- **Not acted on:** changing a documented rulebook threshold is a decision, not a fix.
+  `verify 2_5` fails on it so it stays visible.
+- **Status:** open · **Owner:** user
+
+### ISS-022 — Flat 0.25% risk implies a much larger account than expected
+- **Found:** 2026-10-19, step 2.7, by writing a sizing fixture that could not trade
+- **Severity:** not a defect — a fact about the rulebook that the capital figure in
+  `docs/07` has to reckon with
+- **The arithmetic:** a NIFTY debit spread with a ₹140 max loss per unit and a 75 lot
+  risks **₹10,500 per lot**. At flat 0.25% risk per trade (FR-6.3), one lot needs
+  **₹42,00,000** of equity. At ₹10,00,000 the budget is ₹2,500 and the correct answer is
+  **zero lots** — which the sizing returns, with a reason, rather than rounding up.
+- **Why it is easy to miss:** the gate behaves perfectly. It refuses, states why, and
+  never breaches. Nothing looks broken; the briefing simply never produces a tradable
+  size, and the cause is capital rather than code.
+- **Options:** raise the risk fraction (changes the whole risk model and needs a DEVLOG
+  entry); prefer narrower spreads with a smaller max loss per unit; trade stock options
+  where lot value is lower; or accept that index structures need a larger account.
+- **What I did:** nothing to the rulebook. `verify 2_7` reports the minimum viable
+  capital as a measured line so the number is visible rather than inferred.
+- **Related:** `docs/07` has a blank for the capital figure, and this is the input it
+  needs. Also interacts with ISS-021 — a narrower spread would help both.
+- **Status:** open · **Owner:** user
+
+### ISS-023 — Trading costs are ~13% of a real spread's best case
+- **Found:** 2026-10-19, step 2.8, costing the AXISBANK structure built in 2.5
+- **Severity:** informational now, decisive once the dry run has data
+- **Measured:** a four-order round trip on a ₹7,500-per-leg turnover costs **₹272.30**
+  (brokerage ₹80, STT ₹15, slippage ₹150, the rest statutory) against a **₹2,086.50**
+  max gain per lot. **Costs consume 13% of the best possible outcome**, and far more of a
+  typical one, since the exit target is 60% of spread width rather than the maximum.
+- **The largest single component is slippage at ₹150**, which is an *assumption*
+  (0.5% of premium per leg) and not a measured number. It cannot be measured until there
+  are real fills, so the figure above is a guess that happens to dominate the total.
+- **Why it matters:** docs/10 wants hypothetical P&L "after full costs". A 13% haircut on
+  the best case means marginal setups are losers after costs, and the dry run will show
+  that once it has history to run over.
+- **Status:** open, informational · **Owner:** me (remeasure slippage once fills exist)
+
+### ISS-025 — Stored filings are subject lines, not content; EARNINGS_SURPRISE is unreachable
+- **Found:** 2026-10-19, step 3.2, generating the labelling sheet from the real archive
+- **Severity:** high — it blocks the most important catalyst type in Setup A
+- **Measured:** 1,542 filings, body length **min 17 / mean 144 / max 879 characters**. The
+  bodies are stubs of the form *"X has informed the Exchange about Y"*. The actual content
+  is in a PDF attachment that the 1.5a adapter records a URL for and never fetches.
+- **Consequence:** the subject router settles 60% of filings (718 routine + 207 catalyst),
+  and the remaining **617 that "need the document" have no document to read**. The LLM
+  classifier is handed a 144-character stub and can only answer NONE honestly.
+- **The specific gap:** `EARNINGS_SURPRISE` and `GUIDANCE_CHANGE` — the two types Setup A
+  was designed around — are **structurally unreachable**. They live inside "Outcome of
+  Board Meeting" (139 filings) and "Press Release" (97), and the subject says only that
+  results were declared, never whether they beat. No amount of classifier tuning fixes
+  this; the information is not in the database.
+- **Also:** the RSS side holds **25 articles, all SEBI, spanning 3 days**. Journalism would
+  carry the earnings numbers, but no commercial Indian publisher permits this use
+  (ISS-010), so that route is closed on compliance grounds rather than technical ones.
+- **Options, cheapest first:**
+  1. **Fetch and parse the PDF attachments.** Checked, not assumed: **1,524 of 1,542
+     filings carry a real `https://nsearchives.nseindia.com/...` URL** in
+     `filings.attachments`, and **all 507 of the "needs reading" subjects have one**
+     (Outcome of Board Meeting 139/139, Press Release 97/97, General Updates 178/178,
+     Updates 93/93). So nothing needs re-crawling — the pointers are already here.
+     NSE's terms permit the documents (mandated public disclosure, the same basis as
+     the filings themselves — to be re-read before acting, per the ISS-014 standard).
+     Earnings PDFs are tabular and awkward, but the numbers are in them.
+  2. **Dhan's fundamentals endpoint**, if the paid Data API exposes reported vs estimated
+     — turns EARNINGS_SURPRISE into arithmetic rather than classification, which is
+     better anyway. Needs the ₹499/month subscription to check.
+  3. **Narrow Setup A to the five reachable catalyst types** for v1 and drop the two
+     earnings ones until a source exists. Honest, and it ships.
+- **My recommendation:** (3) now so Phase 3 is not blocked, with (1) as the next data
+  step. Taking (3) alone permanently would gut Setup A, so it is a staging decision, not
+  a final one.
+- **Status:** open, needs Ajay's call · **Owner:** Ajay to choose, me to build
+### ISS-026 — The Fundamental agent is blind to promoter pledge and sell-down
+- **Found:** 2026-10-19, building step 3.3
+- **Severity:** correctness
+- **Symptom:** `docs/02` names pledged shares as the Fundamental agent's headline
+  disqualifier. **0 of 1,542 stored filings mention pledge, encumbrance or promoter**
+  (measured, `verify 3_3`). Those disclosures are filed under SEBI's SAST and PIT
+  regimes, which NSE publishes on a different endpoint from the one step 1.5 polls.
+- **Impact:** a clear report from the Fundamental agent does not mean the company is
+  clean, it means nothing was found in the half of the disclosure universe we fetch.
+  The agent says so in `unavailable` on **every** call, so the briefing cannot read the
+  silence as evidence — but the veto itself is weaker than `docs/06` assumes.
+- **Related:** the same shape as ISS-025 — the gate exists, the data does not.
+- **Options:** (1) add an NSE SAST/PIT poller in a Phase 1 follow-up, same pattern as
+  the filings poller and free; (2) accept the gap for v1 and keep the disclosure;
+  (3) check whether the paid Dhan Data API exposes shareholding-pattern changes.
+- **Recommendation:** (1), as a small data step after the filing PDFs (ISS-025). It is
+  the same crawler with a different path.
+- **Status:** open · **owner: user** — a decision about data scope, not a code defect
+
+### ISS-027 — No sector map exists, so correlated names cannot be detected
+- **Found:** 2026-10-19, building step 3.3
+- **Severity:** correctness
+- **Symptom:** `docs/02` asks the Portfolio Context agent to report sector
+  concentration. **9 config files, none naming a sector** (measured, `verify 3_3`),
+  and the Dhan instrument master carries none either.
+- **Impact:** the agent can tell you that you hold three positions; it cannot tell you
+  they are three private banks. That is the exact failure `docs/02` names — "the
+  seventh correlated long Nifty-bank bet". Per-symbol concentration still works.
+- **Why not just write one:** a hand-written sector map for 25 names would look
+  authoritative and be unsourced, which is the class of invented data CLAUDE.md rule 6
+  exists to keep out. The agent reports it as unavailable instead.
+- **Options:** (1) take NSE's own sectoral index membership (NIFTY BANK, NIFTY IT,
+  NIFTY FMCG …) as the sector map — published, free, and already the market's
+  definition of correlated; (2) buy a classification; (3) leave it for v1.
+- **Recommendation:** (1). It is one config file with a source URL, and it is the
+  definition the market actually trades.
+- **Status:** open · **owner: user** — one decision, then an hour of work
+
+### ISS-028 — Two of Setup A's calendar inputs have no source, and both fail open
+- **Found:** 2026-10-19, wiring the strategist graph in step 3.4
+- **Severity:** correctness
+- **Symptom:** `SetupACandidate` carries `in_ban_list: bool` and
+  `results_date_in_window: date | None`. Nothing in the system fetches either, so every
+  cycle supplies `False` and `None` — and both of those are the **permissive** answer.
+  The calendar gate therefore reports PASS on a banned symbol and on a company
+  reporting results inside the expiry window.
+- **Why it matters:** this is the one place in the decision path where missing data
+  reads as "fine" rather than NO_DATA. Everywhere else an absent input blocks (rule 6);
+  here the types have no room for "unknown", so the gate cannot tell.
+- **Mitigation now:** the cycle reports both as missing inputs on **every** run
+  (`CycleOutcome.missing_inputs`), and `verify 3_4` fails if it ever stops doing so.
+  That makes the gap visible in the briefing rather than silent.
+- **Options:** (1) fetch the NSE F&O ban list daily — it is published, free, and one
+  more poller of the kind step 1.5 already has; (2) widen both fields to tri-state so
+  unknown blocks, which is correct but makes every cycle fail until (1) is done;
+  (3) accept it for v1 with the disclosure.
+- **Recommendation:** (1), then (2). The ban list is a few hours of work and removes
+  the only fail-open input in the gate chain. An earnings calendar is harder — there is
+  no free authoritative source — and interacts with ISS-025.
+- **Status:** open · **owner: user** — a data-scope decision
+
 ## Closed
 
 ### ISS-001 — Dhan websocket instrument cap unknown
@@ -435,101 +627,6 @@ logged and work continues — no drive-by fixes inside a step.
   all route around them; TRUNCATE is the one that is cheap to defend against.
 - **Status:** closed · **Owner:** me
 
-### ISS-020 — A TimescaleDB restore failed once and will not reproduce
-- **Found:** 2026-10-18, step 1.9, on the first restore drill ever run
-- **Severity:** unknown, which is the problem
-- **Symptom:** `pg_restore` of a `pg_dump` taken minutes earlier aborted with
-  ```
-  COPY failed for table "metadata":
-  duplicate key value violates unique constraint "metadata_pkey"
-  Key (key)=(exported_uuid) already exists
-  ```
-- **What fixed it:** TimescaleDB's documented restore procedure — `CREATE EXTENSION`,
-  `timescaledb_pre_restore()`, restore, `timescaledb_post_restore()`.
-- **Why it is open rather than closed:** inducing the guard afterwards showed the naive
-  path succeeding against **the same dump that produced the failure**, and against all
-  five dumps taken that day. The failure is real (the error text is verbatim) but not
-  reproducible, so the mechanism is unknown. A plausible story — that `exported_uuid` is
-  written into the source catalogue by `pg_dump` and then re-inserted by the restore —
-  does not survive the fact that the same dump restores cleanly now.
-- **My error, recorded because it is the instructive part:** I wrote "the TimescaleDB
-  dance is mandatory, not optional" and "every backup taken before today would have been
-  worthless" into the adapter docstring, from a single observation. Both claims were
-  unsupported. The induction is the only reason they did not stay in the repo.
-- **Current position:** the pre/post restore calls stay — cheap, documented, harmless, and
-  the one time it mattered it mattered completely. The *claim* that they are required has
-  been removed from the code and from `docs/15`.
-- **What would close this:** a reproduction. Most likely candidate to try is a dump taken
-  from a database that has never been dumped before, restored into a database created
-  before the extension exists. Worth ten minutes the next time the schema changes.
-- **Status:** open · **Owner:** me
-
-### ISS-021 — Setup A's delta bands are unsatisfiable on most real NSE chains
-- **Found:** 2026-10-19, step 2.5, running the structure builder against archived chains
-- **Severity:** **high.** Setup A cannot produce a structure for 15 of 25 universe names,
-  so the setup would almost never fire — and would look like a working system doing it
-- **Measured, on 25 real chains captured 2026-10-16 at 11 DTE:**
-  **10 of 25** have a strike in *both* the long band (delta 0.50–0.55) and the short band
-  (0.25–0.30). No structure is buildable for ADANIENT, BHARTIARTL, COALINDIA, HINDUNILVR,
-  INFY, ITC, KOTAKBANK, LT, M&M, NTPC, RELIANCE, SBIN, SUNPHARMA, TATASTEEL or TCS.
-- **Why:** NSE strike spacing is coarse relative to a 0.05-wide delta band. Delta steps
-  straight over the band between adjacent strikes — on the NIFTY weekly it goes 0.73 →
-  **0.55** → 0.41, skipping 0.25–0.30 entirely. Compounding it, only 15–47 of each chain's
-  strikes carry a delta at all; the rest come back null from the feed.
-- **Why it matters now rather than at 2.8:** `docs/10`'s Phase 2 exit says "If the dry run
-  shows the setups almost never fire, fix that now — it's a threshold problem, and
-  discovering it after the agents are built means rebuilding them." The archived chains
-  make the discovery available today, before any agent exists.
-- **Options, none taken yet — this is a rulebook change and so the user's call:**
-  1. **Widen the bands** (0.45–0.60 long, 0.20–0.35 short). Simplest, and changes the
-     risk profile of every structure.
-  2. **Select the nearest strike to a delta target** rather than requiring band
-     membership, with a documented maximum deviation. Keeps intent, always yields a
-     structure where the chain is liquid at all.
-  3. **Select by moneyness** (% from spot) instead of delta, with delta reported.
-  4. Accept a much smaller tradable universe per day.
-- **My recommendation: option 2.** "Closest to 0.525, reject beyond 0.45–0.60" preserves
-  the rulebook's intent and degrades honestly on a coarse chain, rather than silently
-  trading a different structure from the one specified.
-- **Not acted on:** changing a documented rulebook threshold is a decision, not a fix.
-  `verify 2_5` fails on it so it stays visible.
-- **Status:** open · **Owner:** user
-
-### ISS-022 — Flat 0.25% risk implies a much larger account than expected
-- **Found:** 2026-10-19, step 2.7, by writing a sizing fixture that could not trade
-- **Severity:** not a defect — a fact about the rulebook that the capital figure in
-  `docs/07` has to reckon with
-- **The arithmetic:** a NIFTY debit spread with a ₹140 max loss per unit and a 75 lot
-  risks **₹10,500 per lot**. At flat 0.25% risk per trade (FR-6.3), one lot needs
-  **₹42,00,000** of equity. At ₹10,00,000 the budget is ₹2,500 and the correct answer is
-  **zero lots** — which the sizing returns, with a reason, rather than rounding up.
-- **Why it is easy to miss:** the gate behaves perfectly. It refuses, states why, and
-  never breaches. Nothing looks broken; the briefing simply never produces a tradable
-  size, and the cause is capital rather than code.
-- **Options:** raise the risk fraction (changes the whole risk model and needs a DEVLOG
-  entry); prefer narrower spreads with a smaller max loss per unit; trade stock options
-  where lot value is lower; or accept that index structures need a larger account.
-- **What I did:** nothing to the rulebook. `verify 2_7` reports the minimum viable
-  capital as a measured line so the number is visible rather than inferred.
-- **Related:** `docs/07` has a blank for the capital figure, and this is the input it
-  needs. Also interacts with ISS-021 — a narrower spread would help both.
-- **Status:** open · **Owner:** user
-
-### ISS-023 — Trading costs are ~13% of a real spread's best case
-- **Found:** 2026-10-19, step 2.8, costing the AXISBANK structure built in 2.5
-- **Severity:** informational now, decisive once the dry run has data
-- **Measured:** a four-order round trip on a ₹7,500-per-leg turnover costs **₹272.30**
-  (brokerage ₹80, STT ₹15, slippage ₹150, the rest statutory) against a **₹2,086.50**
-  max gain per lot. **Costs consume 13% of the best possible outcome**, and far more of a
-  typical one, since the exit target is 60% of spread width rather than the maximum.
-- **The largest single component is slippage at ₹150**, which is an *assumption*
-  (0.5% of premium per leg) and not a measured number. It cannot be measured until there
-  are real fills, so the figure above is a guess that happens to dominate the total.
-- **Why it matters:** docs/10 wants hypothetical P&L "after full costs". A 13% haircut on
-  the best case means marginal setups are losers after costs, and the dry run will show
-  that once it has history to run over.
-- **Status:** open, informational · **Owner:** me (remeasure slippage once fills exist)
-
 ### ISS-024 — A trigger drill wrote a row into a ledger that cannot be deleted
 - **Found:** 2026-10-19, step 3.1, first run of the `llm_calls` append-only drill
 - **Severity:** resolved, but the lesson generalises to every append-only table
@@ -551,38 +648,3 @@ logged and work continues — no drive-by fixes inside a step.
   The database has been reset since. Nothing to clean up there.
 - **Status:** fixed · **Owner:** me
 
-### ISS-025 — Stored filings are subject lines, not content; EARNINGS_SURPRISE is unreachable
-- **Found:** 2026-10-19, step 3.2, generating the labelling sheet from the real archive
-- **Severity:** high — it blocks the most important catalyst type in Setup A
-- **Measured:** 1,542 filings, body length **min 17 / mean 144 / max 879 characters**. The
-  bodies are stubs of the form *"X has informed the Exchange about Y"*. The actual content
-  is in a PDF attachment that the 1.5a adapter records a URL for and never fetches.
-- **Consequence:** the subject router settles 60% of filings (718 routine + 207 catalyst),
-  and the remaining **617 that "need the document" have no document to read**. The LLM
-  classifier is handed a 144-character stub and can only answer NONE honestly.
-- **The specific gap:** `EARNINGS_SURPRISE` and `GUIDANCE_CHANGE` — the two types Setup A
-  was designed around — are **structurally unreachable**. They live inside "Outcome of
-  Board Meeting" (139 filings) and "Press Release" (97), and the subject says only that
-  results were declared, never whether they beat. No amount of classifier tuning fixes
-  this; the information is not in the database.
-- **Also:** the RSS side holds **25 articles, all SEBI, spanning 3 days**. Journalism would
-  carry the earnings numbers, but no commercial Indian publisher permits this use
-  (ISS-010), so that route is closed on compliance grounds rather than technical ones.
-- **Options, cheapest first:**
-  1. **Fetch and parse the PDF attachments.** Checked, not assumed: **1,524 of 1,542
-     filings carry a real `https://nsearchives.nseindia.com/...` URL** in
-     `filings.attachments`, and **all 507 of the "needs reading" subjects have one**
-     (Outcome of Board Meeting 139/139, Press Release 97/97, General Updates 178/178,
-     Updates 93/93). So nothing needs re-crawling — the pointers are already here.
-     NSE's terms permit the documents (mandated public disclosure, the same basis as
-     the filings themselves — to be re-read before acting, per the ISS-014 standard).
-     Earnings PDFs are tabular and awkward, but the numbers are in them.
-  2. **Dhan's fundamentals endpoint**, if the paid Data API exposes reported vs estimated
-     — turns EARNINGS_SURPRISE into arithmetic rather than classification, which is
-     better anyway. Needs the ₹499/month subscription to check.
-  3. **Narrow Setup A to the five reachable catalyst types** for v1 and drop the two
-     earnings ones until a source exists. Honest, and it ships.
-- **My recommendation:** (3) now so Phase 3 is not blocked, with (1) as the next data
-  step. Taking (3) alone permanently would gut Setup A, so it is a staging decision, not
-  a final one.
-- **Status:** open, needs Ajay's call · **Owner:** Ajay to choose, me to build

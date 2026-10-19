@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from uuid import UUID
 
 from trading_desk.ports.notifier import AlertLevel, DeliveryReceipt
 
@@ -17,6 +18,7 @@ class FakeNotifier:
     def __init__(self) -> None:
         self.briefings: list[str] = []
         self.alerts: list[tuple[AlertLevel, str]] = []
+        self.decisions_asked: list[tuple[UUID, str]] = []
         self.fail_next_send = False
 
     def _receipt(self) -> DeliveryReceipt:
@@ -34,4 +36,11 @@ class FakeNotifier:
 
     def send_alert(self, level: AlertLevel, message: str) -> DeliveryReceipt:
         self.alerts.append((level, message))
+        return self._receipt()
+
+    def ask_decision(self, idea_id: UUID, markdown: str) -> DeliveryReceipt:
+        if self.fail_next_send:
+            self.fail_next_send = False
+            raise ConnectionError("Simulated delivery failure")
+        self.decisions_asked.append((idea_id, markdown))
         return self._receipt()
