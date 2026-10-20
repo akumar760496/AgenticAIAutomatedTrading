@@ -90,6 +90,9 @@ ignore = [
 # The CLI is the one place in src/ that talks to a terminal. Library code still
 # may not print: it takes an announce callback or uses the logger.
 "src/trading_desk/interfaces/cli.py" = ["T20"]
+# The dashboard server prints the URL it is serving and nothing else. A logger
+# line would be the wrong channel: the address is the command's only output.
+"src/trading_desk/interfaces/dashboard.py" = ["T20"]
 # A fake or stub must match the signature it stands in for, even where it ignores
 # an argument. Dropping the parameter would stop it satisfying the port.
 "tests/fakes/**" = ["ARG002"]

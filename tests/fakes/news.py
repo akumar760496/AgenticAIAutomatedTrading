@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from trading_desk.domain.news import FeedFailure, Filing, NewsArticle
+from trading_desk.domain.news import FeedFailure, NewsArticle
 
 
 class FakeNews:
@@ -28,31 +28,3 @@ class FakeNews:
             if article.published_at > since
             and (not wanted or wanted & set(article.instrument_symbols))
         ]
-
-
-class FakeFilings:
-    """fail_next_fetch exercises a feed outage: the ingest must report it, not crash."""
-
-    def __init__(self) -> None:
-        self._filings: list[Filing] = []
-        self.fail_next_fetch = False
-        self.calls = 0
-
-    def add(self, *filings: Filing) -> None:
-        self._filings.extend(filings)
-
-    def fetch_since(self, since: datetime, symbols: list[str]) -> list[Filing]:
-        self.calls += 1
-        if self.fail_next_fetch:
-            self.fail_next_fetch = False
-            raise ConnectionError("Simulated filings feed failure")
-
-        wanted = set(symbols)
-        return sorted(
-            (
-                filing
-                for filing in self._filings
-                if filing.filed_at > since and (not wanted or filing.symbol in wanted)
-            ),
-            key=lambda filing: filing.filed_at,
-        )

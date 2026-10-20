@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Protocol
 
-from trading_desk.domain.news import FeedFailure, Filing, NewsArticle
+from trading_desk.domain.news import FeedFailure, NewsArticle
 
 
 class NewsPort(Protocol):
@@ -29,10 +29,4 @@ class NewsPort(Protocol):
         dark changes what the briefing may claim. Without it a 403 and a quiet
         news day are the same empty list (CLAUDE.md rule 6).
         """
-        ...
-
-
-class FilingsPort(Protocol):
-    def fetch_since(self, since: datetime, symbols: list[str]) -> list[Filing]:
-        """Exchange announcements filed after `since` for any of `symbols`."""
         ...

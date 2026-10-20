@@ -10,6 +10,49 @@ and observe — which is the real test of Phase 3, because everything so far was
 tested with me present.
 **Package name:** `trading_desk` (decided 2026-10-15)
 
+**NSE has been removed entirely (ISS-041, 20 Oct).** Their Terms of Use state:
+*"User is prohibited to conduct any systematic or automated data collection
+activities (including scraping, data mining, data extraction and data harvesting)
+on or in relation to our Website."* There is no personal-use exception. The
+copyright page's permission to "view, print copies and download" for personal
+non-commercial purposes describes a person doing it by hand; the Terms separately
+prohibit automating it. robots.txt is `Allow: /`, but ISS-014 already settled that
+robots.txt is not a licence - RBI was excluded on the same reasoning.
+
+**Done, on Ajay's instruction, not merely halted.** The announcements adapter, the
+document fetcher, `FilingsPort`, `FilingsIngest`, both fakes, their tests,
+`verify 1_5a` and `pypdf` are deleted. The 1,946 stored filings are deleted, along
+with ten backup dumps that contained them and the 175-row label sheet drawn from
+them; a fresh backup was restore-drilled before the old ones went. The compliance
+finding is quoted in `config/news_sources.yaml` (v4), which a session reads.
+
+**Two items left.** 123 `cycle_responses` payloads still carry a one-line filing
+excerpt behind an append-only trigger - flagged, Ajay's call, my view is that the
+audit trail is worth more than the fragments. And `verify 3_2` is now permanently
+unpassable, which is the honest state rather than a regression.
+
+**Setup A's catalyst source is now SEBI's RSS alone** - 27 articles against 1,946
+filings. The catalyst gates have almost no input. `EARNINGS_SURPRISE` is renamed to
+`EARNINGS_GROWTH` (his call, 20 Oct).
+
+**CLAUDE.md rule 11, standing instruction from Ajay (20 Oct):** a legal or
+compliance doubt is raised **in that message, before any code is written**, and the
+finding is recorded quoted in the config a session reads. The default on silence is
+blocked. ISS-042 applies that standard to what is already running and finds four
+sources whose terms no session has read - Dhan (storage question unasked, and it is
+the only one that can cost irreplaceable data), Anthropic, Telegram, cdnjs.
+
+**A strategy framework and a dashboard now exist** (20 Oct, new scope - see DEVLOG).
+`uv run trading-desk backtest` runs every registered strategy and writes
+`data/backtests/latest.json`; `uv run trading-desk dashboard` serves a React page on
+localhost:8765 showing every trade with its entry, exit, P&L, the criteria that
+triggered it, what the market was doing that day, and why it failed. Adding a
+strategy is one class in `domain/backtest/strategies/` plus one line in
+`build_registry`. **Both strategies currently lose money**: the stock breakout at
+37.0% win rate against a 49.7% realised breakeven (-0.72% per trade), and the new
+index pullback at 33.8% against 44.9% (-0.35%). The index strategy is independent
+of the stock one by construction - its own thresholds, exits and horizon.
+
 **ISS-039 is now the one that matters most.** The first backtest of any signal in
 this project measured `technical_confirm` over 22,056 bar-days and found **no
 directional edge** — and the only two statistically distinguishable results are

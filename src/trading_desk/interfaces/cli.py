@@ -39,12 +39,18 @@ from trading_desk.adapters.dhan.instruments import DhanInstrumentMaster
 from trading_desk.adapters.dhan.login import ensure_valid_token, hours_remaining
 from trading_desk.adapters.dhan.token_store import StoredTokenProvider
 from trading_desk.adapters.notify.logging_notifier import LoggingNotifier
+from trading_desk.adapters.store.bar_repository import PostgresBarStore
 from trading_desk.adapters.store.expiry_repository import PostgresExpiryStore
 from trading_desk.adapters.store.jsonl_job_log import JsonlJobLog
 from trading_desk.adapters.store.news_repository import PostgresNewsStore
 from trading_desk.adapters.store.parquet_chain import ParquetChainArchive
 from trading_desk.adapters.telegram.client import TelegramClient
 from trading_desk.adapters.telegram.notifier import TelegramNotifier
+from trading_desk.application.backtest import (
+    DEFAULT_RESULTS_DIR,
+    BacktestRunner,
+    StrategyResult,
+)
 from trading_desk.application.backup import BackupService
 from trading_desk.application.calendars import TradingCalendar, load_trading_calendar
 from trading_desk.application.exchange_rules import load_exchange_rules
@@ -83,6 +89,7 @@ from trading_desk.application.universe_builder import (
     previous_version,
     render_universe,
 )
+from trading_desk.domain.backtest.trade import SimulatedTrade
 from trading_desk.domain.liquidity import rank_by_liquidity
 from trading_desk.domain.news import filing_as_article
 from trading_desk.infra.config import (
@@ -103,6 +110,7 @@ from trading_desk.interfaces.briefing_cli import (
     run_scoring,
     run_telegram_check,
 )
+from trading_desk.interfaces.dashboard import DASHBOARD_PORT, serve_dashboard
 from trading_desk.ports.notifier import AlertLevel
 
 # Three captures a session. Open, midday and just before close, so the IV series
@@ -488,6 +496,115 @@ def _login(force: bool) -> int:
     return 0
 
 
+def _run_backtest() -> int:
+    """Run every registered strategy and write a result for the dashboard.
+
+    Reads bars and config, nothing from Dhan, so it is dispatched before the
+    broker settings load. Costs nothing and spends nothing.
+    """
+    bars = PostgresBarStore(create_session_factory(create_db_engine(load_infra_settings())))
+    request = load_universe_request()
+    runner = BacktestRunner(bars)
+
+    results = runner.run(sorted(request.stock_symbols), list(request.index_symbols))
+    path = runner.write(results)
+
+    examples = _example_count()
+    for result in results:
+        _print_result(result, examples)
+
+    print(f"\nwritten to {path} (and latest.json)")
+    print("view it with: uv run trading-desk dashboard")
+    print(f"more worked examples with: uv run trading-desk backtest --explain {examples + 3}")
+    return 0
+
+
+def _example_count() -> int:
+    """How many trades to show in full. Default 2 - enough to see the shape."""
+    for index, argument in enumerate(sys.argv):
+        if argument == "--explain" and index + 1 < len(sys.argv):
+            return int(sys.argv[index + 1])
+    return 2
+
+
+def _print_result(result: StrategyResult, examples: int) -> None:
+    """One strategy's summary, the criteria it requires, and worked examples.
+
+    The criteria are printed every run. Without them the report says a strategy
+    lost money without ever saying what it was doing, which is unreviewable.
+    """
+    rate = result.win_rate
+    if rate is None:
+        print(f"\n{result.strategy}: no trades")
+        return
+
+    # The verdict is expectancy, never the win rate. A strategy can clear its
+    # theoretical breakeven and still lose money, and one here does.
+    verdict = "PROFITABLE" if result.profitable else "LOSES MONEY"
+    realised = result.realised_breakeven
+    needed = f"{realised:.1%}" if realised is not None else "n/a"
+
+    print(f"\n{'=' * 78}")
+    print(f"{result.strategy}  -  {verdict}")
+    print(f"{'=' * 78}")
+    print(f"  {result.description}")
+    print(f"  exits: {result.exits}")
+    print(
+        f"  {len(result.trades)} trades, win rate {rate:.1%} "
+        f"(needs {needed} at its realised win/loss sizes), "
+        f"expectancy {result.expectancy or 0:+.2%}"
+    )
+
+    print("\n  WHY A TRADE IS TAKEN - every trade below satisfied all of these:")
+    for reason in result.trades[0].reasons:
+        print(f"    - {reason.name}: needs {reason.threshold}")
+
+    shown = min(examples, len(result.trades))
+    print(f"\n  WORKED EXAMPLES ({shown} of {len(result.trades)}):")
+    for trade in result.trades[:examples]:
+        _print_trade(trade)
+
+
+def _print_trade(trade: SimulatedTrade) -> None:
+    outcome = "WON" if trade.won else "LOST"
+    print(
+        f"\n    {trade.symbol} {trade.direction.value} "
+        f"{trade.entry_date} Rs {trade.entry_price.rupees():,.2f} -> "
+        f"{trade.exit_date} Rs {trade.exit_price.rupees():,.2f} "
+        f"({trade.sessions_held}d, {trade.exit_reason.value}) "
+        f"{trade.net_return:+.2%} {outcome}"
+    )
+    print("      taken because:")
+    for reason in trade.reasons:
+        print(f"        - {reason.name}: measured {reason.measured}, needed {reason.threshold}")
+    print(f"      market that day: {trade.market_direction.value}", end="")
+    print(" (TRADED AGAINST IT)" if trade.against_market else " (traded with it)")
+    print(f"      news check: {trade.against_news}")
+    if not trade.won:
+        print(f"      failed as: {trade.failure_mode.value}")
+        print(f"        {trade.failure_mode.explain()}")
+
+
+def _serve_dashboard() -> int:
+    """Serve the backtest dashboard on localhost.
+
+    A plain static server rather than FastAPI: the page is one file and the
+    data is one JSON file beside it, so there is no route to get wrong.
+    """
+    port = DASHBOARD_PORT
+    for index, argument in enumerate(sys.argv):
+        if argument == "--port" and index + 1 < len(sys.argv):
+            port = int(sys.argv[index + 1])
+
+    results = DEFAULT_RESULTS_DIR / "latest.json"
+    if not results.exists():
+        print(f"No results at {results}. Run: uv run trading-desk backtest", file=sys.stderr)
+        return 1
+
+    serve_dashboard(port)
+    return 0
+
+
 def main() -> int:
     command = sys.argv[1] if len(sys.argv) > 1 else "run"
 
@@ -497,6 +614,12 @@ def main() -> int:
     if command == "label-news":
         configure_logging(load_app_settings().log_level)
         return _write_label_sheet()
+    if command == "backtest":
+        configure_logging(load_app_settings().log_level)
+        return _run_backtest()
+    if command == "dashboard":
+        configure_logging(load_app_settings().log_level)
+        return _serve_dashboard()
     if command in CHAT_COMMANDS:
         configure_logging(load_app_settings().log_level)
         return _run_chat_command(command)
@@ -520,7 +643,7 @@ def main() -> int:
     print(
         "Usage: trading-desk "
         "[run|snapshot|login|survey|label-news|brief|capture|nag|review|score|"
-        "calibration|health|telegram-check]",
+        "calibration|health|telegram-check|backtest|dashboard]",
         file=sys.stderr,
     )
     return 2

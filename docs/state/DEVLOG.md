@@ -1043,3 +1043,167 @@ services. **Cost: Rs 4.15 for one complete cycle.**
   Setup A's configured exits are fractions of the spread premium and need option price
   history we do not have (ISS-037). Anyone reading this later must not mistake 1.0/1.5 ATR
   for a signed-off rule.
+
+## 2026-10-20 · New scope — a strategy framework and a backtest dashboard
+- **New scope, declared before the code (rule 10).** Neither of these is a numbered step in
+  `docs/10`. Asked for directly by Ajay after ISS-039 showed the one measurable signal has
+  negative expectancy: he wants to iterate on strategies, so the backtest has to stop being
+  a one-off script and the results have to be inspectable.
+- **Decision: a strategy is a Protocol in `domain/backtest/`, carrying its own exit
+  policy.** The index strategy is independent of the stock strategy by construction rather
+  than by convention — separate thresholds, separate exits, separate instrument kind. ISS-039
+  measured the stock rule at 37% and the same rule on indices at 23%, so sharing parameters
+  between them was never defensible.
+- **Decision: a signal returns `GateResult`s, not a boolean.** Rule 9 already requires this
+  of production gates; applying it to backtest signals is what makes "why was this trade
+  taken" answerable per trade, which is the dashboard's main job.
+- **Decision: React from a CDN in one HTML file, served by `trading-desk dashboard`.** The
+  repo has no node toolchain and adding one for a results viewer is not worth it. The page
+  reads `data/backtests/*.json`, so a new strategy run appears on refresh with no build step
+  and no re-publishing.
+- **Refused to fabricate two of the requested columns.** "Traded against the news" cannot be
+  answered for 2023-2025: the filings archive starts 2026-10-14 and holds six days. The
+  field exists and reads `unavailable (no news archive before 2026-10-14)` rather than
+  defaulting to "no" — the same reasoning as `NO_DATA` in the gates. Market direction *is*
+  available, from NIFTY's own bars, and is populated.
+- **"What can we do to improve it" is mechanical, deliberately.** The diagnosis names what
+  happened (stopped inside one session, gapped through the stop, time-stopped without
+  movement) and the parameter implicated. It does not generate trading advice; an LLM
+  inventing a fix for a losing strategy is how a backtest becomes a story.
+- **Built and measured.** `domain/backtest/` (strategy protocol, engine, two strategies),
+  `application/backtest.py`, `trading-desk backtest`, `trading-desk dashboard`, 28 new tests.
+  First run: `stock_breakout_volume` 988 trades, 37.0% win rate, **-0.72%** expectancy;
+  `index_trend_pullback` 68 trades, 33.8%, **-0.35%**. Both lose money.
+- **My own reporting was wrong on the first run, and the fix is the useful part.** It
+  printed "beats breakeven" for the index strategy because 33.8% clears the *theoretical*
+  33.3% implied by a 1:2 stop/target. Its expectancy was negative. The theoretical figure
+  assumes every win is the full target and every loss the full stop; gaps overshoot the
+  stop and time stops exit part-way, so the **realised** breakeven is always higher - 49.7%
+  and 44.9% here against theoretical 40.0% and 33.3%. The verdict is now expectancy, and
+  `realised_breakeven` is what the dashboard colours against. A win-rate-versus-theoretical
+  comparison is a number that can flatter a losing strategy, which is how it behaved.
+- **Surprised by: 147 of 988 stock trades (15%) gapped through the stop.** Combined with
+  180 stopped inside one session, over a third of all trades die on or before the first
+  session. A gap is the one failure a tighter stop makes worse, so this bounds how much any
+  stop-tuning can recover - worth knowing before anyone tunes one.
+- **Engine honesty rules, each with an induced test:** entry at the open *after* the signal;
+  a bar containing both stop and target scores as a stop; a gap fills at the open rather
+  than at the stop level. Those three assumptions move the result more than the strategies
+  do, which is why they are tested rather than commented.
+- **Fixed on Ajay's feedback: "still not found reason why u take the trade".** The reasoning
+  was in the JSON and correct, but the terminal report never printed it and the dashboard
+  hid it behind a row click. Both were my framing, not a data gap. The report now prints the
+  criteria every run plus worked examples with measured values, and the dashboard carries a
+  visible `why this trade was taken` column and a chevron so the row expansion is findable.
+  Worth recording because the lesson generalises: a measured value that is stored but not
+  shown is indistinguishable from one that was never measured.
+
+## 2026-10-20 · New data source — filing documents, read but never stored
+- **New scope, declared before the code (rule 10).** Filing PDF attachments become an
+  input. ISS-025 has blocked the catalyst gates since 19 Oct: stored filing bodies average
+  143 characters because the content is in an attachment the 1.5a adapter records a URL for
+  and never fetches. Verified today on the live archive: **1,917 of 1,946 filings carry an
+  `nsearchives.nseindia.com` URL, and 100% of every subject that needs reading does.**
+- **Verified rather than assumed, in one probe:** a real fetch returned HTTP 200,
+  8.76 MB, `application/pdf`, with a **genuine text layer** — 53,531 characters over 21
+  pages, against the 144 characters the database holds for the same filing. Revenue, total
+  income, PBT, profit for the period, EPS and EBITDA all appear as extractable text.
+- **Decision, forced by the terms re-read (ISS-040): the document text is never stored.**
+  NSE's copyright page says no portion of the Content may be "stored in any other website
+  or in other form of electronic retrieval system", while separately permitting users to
+  "view, print copies and download" for personal, non-commercial purposes. Reading a filing
+  for one's own research fits the second clause; putting its text in Postgres runs into the
+  first. So the adapter fetches at classification time, hands the text to the classifier,
+  and discards it. What persists is the derived catalyst type, the confidence, and the short
+  evidence quote the grounding check already requires.
+- **Rejected: a `filing_documents` table.** It was the obvious design and it is the one the
+  terms forbid. It would also have cost ~17 GB and introduced a stale-copy problem. The
+  transient shape is cheaper and simpler; the real cost is that re-classifying an old filing
+  means re-fetching it, so a prompt change is no longer free.
+- **Decision: `EARNINGS_SURPRISE` is not unlocked by this and must not pretend to be.** A
+  surprise is reported *versus expected*, and no PDF contains anyone's estimate. The five
+  prose types plus `GUIDANCE_CHANGE` are genuinely unlocked. The earnings types need either
+  a consensus-estimate source (a purchase, Ajay's call) or honest renaming to growth.
+- **Surprised by the extraction quality, and it changes the plan.** The revenue line comes
+  out as `4,548 4,163 3 ,701 8,711 7 , 2'22` — spacing artefacts, an apostrophe for a comma,
+  and **no column headers**. Which figure is the current quarter versus the year-ago quarter
+  is not recoverable from the line alone, and guessing produces a confident wrong growth
+  number. So the first pass does **no numeric table parsing at all**: prose types only.
+- **Cost, measured not guessed:** ~3-10 in-universe filings a day need a document, at
+  ~13,400 tokens each, which is **₹0.40-1.20/day** on Haiku. Before the ISS-035 universe
+  fix the same work would have been ~₹25/day and ~₹900 to backfill. The bug fix is what
+  makes this affordable.
+- **Follow-up:** ISS-040 (the terms reading, needs Ajay), ISS-025 (unblocked by it).
+- **Owner decision: stop NSE collection** (20 Oct, ISS-041). The Terms of Use prohibit
+  "any systematic or automated data collection activities" with no personal-use exception.
+  `verify 1_5a` no longer polls; NSE is in `excluded` in `news_sources.yaml` v4 with the
+  clause quoted; the document fetcher stays unwired.
+- **My error, worth recording because the guard already existed.** I read the copyright
+  page, found "users may view, print copies and download ... for personal, non-commercial
+  purpose", and reported the fetch as defensible. The prohibition was in the Terms of Use,
+  a document I had started and not finished. ISS-014's standing rule - *a source is used
+  when its terms clearly allow it, not when they merely fail to forbid it* - is exactly
+  the rule that would have caught this, and I applied it to sixteen publishers on 18 Oct
+  and not to the source we already depended on. The lesson is not "read more"; it is that
+  the standard has to be applied hardest to the source you most want to keep.
+- **The working poller is kept as unreachable code**, not deleted. If permission or a
+  licensed vendor arrives, one constant changes. Deleting it would lose a verified
+  implementation to re-earn later, and the compliance position is recorded in config where
+  a future session will actually read it.
+- **Owner instruction: remove, not halt.** The NSE scraper, the PDF fetcher, `FilingsPort`,
+  `FilingsIngest`, both fakes, their tests, `verify 1_5a` and the `pypdf` dependency are
+  deleted. My earlier choice to keep the poller as unreachable code was wrong and the
+  override is the better call: unreachable code is still code a future session can switch
+  back on, and the reasoning belongs in `config/news_sources.yaml`, which a session reads,
+  rather than in a comment beside a dead function.
+- **Verified by audit rather than asserted:** the only remaining outbound HTTP paths are
+  the three Dhan hosts (paid, licensed), `api.telegram.org` (the owner's own bot), and
+  `rss.py`, whose feed list in config contains SEBI alone. Two `nseindia.com` strings
+  survive in test fixtures; both are `url=` fields on constructed objects with no fetch.
+- **`verify 1_5a` is deleted rather than left failing.** The step verified a capability
+  that no longer exists, and a permanently-red check trains people to ignore red checks.
+  Ports drop from 20 to 19 in `step_0_6`.
+- **Owner instruction: delete the stored filings.** 1,946 rows gone. The useful part was
+  that looking for *copies* found three more than the table: ten of eleven backup dumps
+  (confirmed with `pg_restore -l`), and `data/labels/news_catalysts.csv`, which held 175
+  rows of filing text for the step 3.2 labelling task. A fresh backup was taken and
+  restore-drilled **before** deleting the old ones, so there was no window without a
+  working backup.
+- **Not removed, and it needs a decision:** 123 `cycle_responses` payloads carry a
+  one-line verbatim excerpt from a filing inside `evidence_quote`. The table's append-only
+  trigger blocks DELETE deliberately - it is what makes the cost ledger tamper-evident - so
+  removing them means dropping a safety guard to delete one-line fragments. Flagged rather
+  than decided.
+- **`verify 3_2` is now permanently unpassable** and that is the honest state, not a
+  regression to fix: the subject-router check degraded to "no filings in the archive to
+  measure against" rather than crashing, and the 200-item labelling set was to be drawn
+  from the archive that no longer exists.
+
+### 2026-10-20 — owner instruction: warn on legality *before* the code
+
+> "From now onward make sure if its not legal or have compliance issue, u will warn about
+> update the doc accordingly"
+
+This is the lesson of ISS-041 turned into a rule. The NSE failure was not that the terms
+were hard to read — it was the **order of operations**. The adapter was written, the data
+was stored for six days, and the binding clause was found afterwards, only because the
+owner asked a direct question. By then the remedy was deleting 1,946 rows, ten backup
+dumps, a 175-row label sheet and a verification step.
+
+Now **CLAUDE.md rule 11**: a legal or compliance doubt is raised in that message, before
+any code is written, and the finding is recorded quoted in the config a session actually
+reads. Three specifics, each one a mistake already made once:
+
+- **"Says nothing about terms" is blocked, not allowed.** The default on silence is no.
+- **Content status is not access status.** A legally-mandated public disclosure may still
+  not be automatically collected. Reading the first as permission for the second was the
+  whole of ISS-041.
+- **Finish the terms before quoting them.** The copyright page permitted viewing and
+  downloading; the prohibition was in the Terms of Use, a document I had opened and not
+  finished reading.
+
+Unchecked sources still in use, now owed a written finding under this rule: **Telegram**
+(the owner's own bot, bot API terms never read), **Anthropic** (commercial API, terms never
+read), **cdnjs** (the dashboard's React tag), and **Dhan**, whose paid API is licensed but
+whose long-term-storage position was never asked — the one that matters, because the IV
+series it feeds is irreplaceable.

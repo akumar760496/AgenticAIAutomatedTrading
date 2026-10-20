@@ -37,6 +37,12 @@ order path in v1.** Plan docs in `docs/`, numbered 00–12.
    threshold it compared against.
 10. **Never widen scope silently.** A new setup, data source or agent needs an entry in
     `docs/state/DEVLOG.md` saying why, before the code.
+11. **Warn before writing, not after.** A legal or compliance doubt about a source, API or
+    document is raised **in that message, before any code is written** — and the finding is
+    recorded, quoted, in the config the next session reads (`config/news_sources.yaml` for
+    news, an `ISS-` entry otherwise). A source is used when its terms **clearly allow** it,
+    not when they merely fail to forbid it. Unread terms are not permission; robots.txt is
+    not a licence. Says nothing about terms → treat it as blocked and say so.
 
 ## 3. Where code goes
 

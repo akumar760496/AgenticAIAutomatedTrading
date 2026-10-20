@@ -16,7 +16,6 @@ from pydantic import BaseModel
 
 from tests.fakes import (
     FakeBrokerRead,
-    FakeFilings,
     FakeJournal,
     FakeLlm,
     FakeMarketData,
@@ -33,7 +32,7 @@ from trading_desk.ports.broker import BrokerReadPort
 from trading_desk.ports.journal import JournalPort, RecordedDecision, RecordedIdea
 from trading_desk.ports.llm import LlmPort
 from trading_desk.ports.market_data import MarketDataPort
-from trading_desk.ports.news import FilingsPort, NewsPort
+from trading_desk.ports.news import NewsPort
 from trading_desk.ports.notifier import AlertLevel, NotifierPort
 from trading_desk.ports.option_chain import OptionChainPort
 
@@ -60,11 +59,12 @@ class TestFakesSatisfyTheirPorts:
         fake: OptionChainPort = FakeOptionChain()
         assert fake.available_expiries(_reliance()) == []
 
-    def test_news_and_filings(self) -> None:
+    def test_news(self) -> None:
+        """Only NewsPort remains. FilingsPort and its fake were removed on
+        2026-10-20 (ISS-041): the one implementation scraped NSE, which their
+        Terms of Use prohibit."""
         news: NewsPort = FakeNews()
-        filings: FilingsPort = FakeFilings()
         assert news.fetch_since(NOW, []) == []
-        assert filings.fetch_since(NOW, []) == []
 
     def test_llm(self) -> None:
         fake = FakeLlm()

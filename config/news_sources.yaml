@@ -12,14 +12,21 @@
 # it, not when they merely fail to forbid it.** Unread terms are not permission.
 #
 # What is left is primary regulatory disclosure, which stands on different
-# ground: a SEBI order or an NSE filing is a legally-mandated public
-# dissemination, not a publisher's copyrighted reporting.
+# ground: a SEBI order is a legally-mandated public dissemination, not a
+# publisher's copyrighted reporting.
+#
+# **NSE was removed on 2026-10-20 (ISS-041).** The reasoning above - that a
+# mandated disclosure is not copyrighted reporting - is about the *content*. It
+# says nothing about the *manner of access*, and NSE's Terms of Use prohibit
+# "any systematic or automated data collection activities" outright. Reading
+# the content's status as permission to automate collecting it was the mistake;
+# the clause is quoted under `excluded`.
 #
 # Nothing here may be added without reading that source's terms and recording
 # the finding, quoted, in this file.
 
-version: 3
-effective_from: 2026-10-18
+version: 4
+effective_from: 2026-10-20
 
 user_agent: "trading-desk/0.1 (personal research bot; +https://github.com/akumar760496/AgenticAIAutomatedTrading)"
 min_interval_seconds: 5
@@ -58,6 +65,61 @@ feeds:
       prominent attribution to SEBI become required first.**
 
 excluded:
+  - name: National Stock Exchange of India (corporate announcements and filing documents)
+    url: https://www.nseindia.com/api/corporate-announcements
+    checked: 2026-10-20
+    terms: https://www.nseindia.com/nse-terms-of-use
+    robots: https://www.nseindia.com/robots.txt
+    reason: >-
+      Live, reachable and the single most useful source in the project - it
+      produced all 1,946 filings in the archive, and 100% of them carry a
+      document URL. Excluded anyway, and the clause is not ambiguous. NSE's
+      Terms of Use: "User is granted a non-exclusive, non-transferable, limited
+      right to access the Website / Mobile Application and avail the services
+      provided by NSE through the Website / Mobile Application. User is
+      prohibited to conduct any systematic or automated data collection
+      activities (including scraping, data mining, data extraction and data
+      harvesting) on or in relation to our Website / Mobile Application." There
+      is no personal-use exception. The separate copyright page does permit a
+      user to "view, print copies and download the Content for personal,
+      non-commercial or educational purpose" - that is a person acting by hand,
+      and it does not license automating the same act. On storage the Terms add
+      that Content "shall not be ... stored (either in hardcopy or in an
+      electronic retrieval system) ... without prior written permission of NSE".
+      robots.txt is "User-agent: * / Allow: /" with only /market-data-test
+      disallowed, which under the ISS-014 standard is not a licence - the same
+      reasoning that excluded RBI despite a permissive robots.txt.
+    unblock: >-
+      Three routes, cheapest first. (1) Free, not a purchase: written permission
+      from NSE, which the clause names explicitly - nsewebmaster@nse.co.in is
+      the contact given on their hyperlinking policy. (2) A licensed vendor:
+      Dhan is already a paid, licensed data source and may expose corporate
+      announcements; this would need checking and would be a purchase decision.
+      (3) Accept the risk in writing as an owner decision, the way ISS-013 was
+      accepted. Until one of those, neither the announcements poller nor the
+      document fetcher may run.
+    vendor_check_2026_10_20: >-
+      Route (2) was investigated. **Global Financial Datafeeds LLP appears as
+      entry 7 on NSE's own "AUTHORISED REALTIME DATA VENDORS" list**
+      (nsearchives.nseindia.com/web/sites/default/files/inline-files/Authorized_Realtime_Data_Vendors.pdf),
+      ticked for CM, F&O, CD and Index. That is verification from the exchange
+      rather than the vendor's own claim, which is the check that was never done
+      for direct NSE access. **But the list is titled "realtime data" and its
+      columns are market-data segments - it does not mention corporate
+      announcements or fundamental data**, which is the data this project needs.
+      Their Fundamental Data API is a separate product and its licence basis is
+      unconfirmed. Two things must be asked in writing before any purchase:
+      (a) under what licence the corporate/fundamental data API is supplied, and
+      (b) whether the NSE authorisation covers it.
+      Their Terms & Conditions are better than NSE's for our use - storage is
+      restricted only against disclosure ("or store it in a manner likely to
+      allow it to be disclosed to third parties") rather than prohibited
+      outright - but carry a catch that matters here: on termination "you will
+      undertake to delete and destroy all licensed materials, copies thereof".
+      For a project whose core asset is an unrepeatable IV time series, ending
+      the subscription would mean deleting the series. They also push exchange
+      compliance back to the subscriber: "it is their duty & responsibility to
+      consult each Source Stock Exchange to know their rules, regulations".
   - name: Reserve Bank of India (press releases and notifications)
     url: https://www.rbi.org.in/pressreleases_rss.xml
     checked: 2026-10-18

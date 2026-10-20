@@ -45,6 +45,9 @@ the difference between ~30 lines a session and ~500.
 | ISS-037 | open | me | The three scheduled chain captures have never run; only 2 days of IV history exist |
 | ISS-038 | open | me | `PipelineReport.llm_calls` over-counts: it includes free subject-routed classifications |
 | ISS-039 | open | user | Measured: `technical_confirm` has no directional edge, and is negative at 1-2 weeks |
+| ISS-040 | open | user | NSE's terms prohibit systematic/automated data collection; the PDF fetcher must not run |
+| ISS-041 | open | user | The NSE announcements poller is itself automated collection under the same clause |
+| ISS-042 | open | me | Four sources are in use whose terms have never been read |
 
 ---
 
@@ -694,3 +697,192 @@ the difference between ~30 lines a session and ~500.
   same signal is worse than these figures, not better.
 - **Status:** open · **Blocks:** `setups.yaml` sign-off (`verify 2_3`), and any claim about
   expected hit rate
+
+### ISS-040 — NSE's copyright terms forbid storing Content; filing document text must be transient
+- **Found:** 2026-10-20, performing the terms re-read ISS-025 requires before fetching
+  filing attachments. The clause changes the design, so it is logged before any code.
+- **Severity:** safety — a compliance constraint, not a defect
+- **Source:** <https://www.nseindia.com/static/nse-copyright>, page dated **21/10/2025**,
+  fetched with the browser headers ISS-013 already requires. Quoted verbatim:
+
+  > "Except as specifically provided herein, NSE is the owner of copyright in all Content
+  > featured on this Website/ Mobile Application and **no portion of the Content may be
+  > reproduced on or transmitted to or stored in any other website or in other form of
+  > electronic retrieval system** or in any other form or by any other means."
+
+  > "Users may **view, print copies and download** the Content for **personal,
+  > non-commercial or educational purpose** without in any way amending, altering,
+  > deleting or modifying any part of the Content and provide full acknowledgement that
+  > the Content originated from this Website/Mobile Application."
+
+- **The two halves point different ways, and that is the whole finding.**
+  *Downloading and reading* a filing PDF for one person's own trading research sits inside
+  the second clause: it is personal and non-commercial in the ordinary sense, since nothing
+  is resold and no service is offered. *Storing the extracted text in Postgres* runs into
+  the first clause almost word for word — a database is "other form of electronic retrieval
+  system". The permitted-use carve-out covers viewing, printing and downloading. It does
+  not mention storing.
+- **Consequence for ISS-025's option (1):** the plan to "fetch and parse the PDF
+  attachments" must not persist the document text. The compliant shape is **transient**:
+  fetch at classification time, extract, classify, discard. What persists is the *derived*
+  result — catalyst type, confidence, and the short evidence quote the grounding check
+  already requires (FR-4.6), which is an excerpt with attribution rather than a
+  reproduction of the Content.
+- **This also makes the system cheaper and simpler**, which is worth noting so the
+  constraint is not read as pure cost: no new table, no migration, no ~17 GB of PDFs, and
+  no stale-copy problem. The trade-off is real though — a document cannot be re-classified
+  later without re-fetching it, so a prompt change means re-reading from NSE.
+- **What is already stored is a separate question.** `filings` holds 1,946 rows of subject,
+  a ~143-character body and a URL. Those are short metadata records of a mandated public
+  disclosure rather than reproductions of a document, which is the ground ISS-014 put them
+  on. This issue does not change that position; it declines to extend it to full documents.
+- **I am not qualified to settle "non-commercial".** Trading one's own account is not
+  obviously commercial and not obviously not. The reading above is mine, it is stated so it
+  can be challenged, and the decision is Ajay's.
+- **SUPERSEDED IN PART, 2026-10-20 — see ISS-041.** The reading above was based on the
+  copyright page alone. The Terms of Use contain a separate and stronger clause
+  prohibiting "any systematic or automated data collection activities", with no
+  personal-use exception. So the transient design does not rescue this: the problem is
+  not only storing the text, it is fetching it automatically at all. **The adapter is
+  built and must not be switched on.** The decision is no longer "transient or stored"
+  but "licensed route, written permission, or drop the source".
+- **Status:** open, needs Ajay's call · **Owner:** Ajay to decide, me to build
+  **Blocks:** ISS-025 option (1), and therefore the catalyst gates
+
+### ISS-041 — The NSE announcements poller falls under the same prohibition
+- **Found:** 2026-10-20, reading the *full* NSE Terms of Use after Ajay asked whether
+  fetching documents is legally fine. I had only read the copyright page and the Terms'
+  introduction; the operative clause is further down and I had missed it.
+- **Severity:** safety — it concerns code that is already running and data already stored
+- **The clause**, <https://www.nseindia.com/nse-terms-of-use>, quoted verbatim:
+
+  > "User is granted a non-exclusive, non-transferable, limited right to access the
+  > Website / Mobile Application and avail the services provided by NSE through the
+  > Website / Mobile Application. **User is prohibited to conduct any systematic or
+  > automated data collection activities (including scraping, data mining, data
+  > extraction and data harvesting) on or in relation to our Website / Mobile
+  > Application.**"
+
+  And on storage:
+
+  > "any information or content or data on the Website / Mobile Application shall not be
+  > copied, modified, reverse engineer, reproduced, uploaded, transmitted, posted,
+  > **stored (either in hardcopy or in an electronic retrieval system)** ... **without
+  > prior written permission of NSE.** Unless the information or Content is available for
+  > download, not to aggregate, copy or duplicate in any manner any of the content."
+
+- **There is no personal-use exception in that clause.** The copyright page separately
+  permits a user to "view, print copies and download" Content for personal,
+  non-commercial purposes - that describes a person doing it by hand. The Terms
+  separately prohibit *automating* it. Both can be true at once, and they are.
+- **Correction to my first write-up of this issue:** I said the poller runs "on a
+  schedule". It does not. `NseAnnouncementsAdapter` is constructed in exactly one place,
+  `scripts/verify/step_1_5a.py`, so collection happened whenever that verification step
+  was run - including by me on 2026-10-20, which fetched 1,163 and inserted 402. There is
+  no scheduled job and no CLI command. The exposure was smaller than I first stated, and
+  stopping it was correspondingly simpler.
+- **Still true:** the 1,946 stored rows are Content held in an electronic retrieval
+  system, and the collection that produced them was automated. **This is not a new risk
+  created by the PDF work; the PDF work is what caused the clause to be read properly.**
+- **robots.txt does not help, by our own standard.** `https://www.nseindia.com/robots.txt`
+  is `User-agent: * / Allow: /` with only `/market-data-test` disallowed. ISS-014 already
+  settled how to treat that: *"a source is used when its terms clearly allow it, not when
+  they merely fail to forbid it... robots.txt permitted several of those paths... neither
+  is a licence. The terms of use are the binding document."* RBI was excluded under
+  exactly this reasoning despite a permissive robots.txt. Applying a different rule to NSE
+  because we want its data would be the standard bending to the need.
+- **The legitimate routes, in the clause's own words:** "without prior written permission
+  of NSE" names the door. So: (a) write to NSE and ask; (b) take filings through a
+  licensed vendor - Dhan is already a paid, licensed data source and may expose corporate
+  announcements; (c) stop collecting from NSE and run Setup A on what can be sourced
+  legitimately, which today is SEBI's RSS (explicitly permitted, ISS-014) plus Dhan.
+- **My error, recorded so the pattern is visible:** I checked the copyright page, found a
+  permissive sentence, and reported the fetch as defensible. The prohibition was in a
+  different document I had not finished reading. The ISS-014 standard exists precisely to
+  stop this and I did not apply it to the source we already depend on.
+- **Owner decision, 2026-10-20: stop.** Acted on the same day:
+  - `verify 1_5a` no longer polls. `_poll_twice` returns `COLLECTION_HALTED` and the step
+    reports a single failing check naming the reason. The working implementation is kept
+    beside it as `_poll_twice_live`, unreachable, because if permission or a licensed
+    route arrives then flipping one constant is the whole change.
+  - NSE moved into `excluded` in `config/news_sources.yaml` (now version 4), with both
+    clauses quoted and three unblock routes. The file header's claim that "an NSE filing
+    is a legally-mandated public dissemination" was corrected: that is about the content's
+    copyright status and says nothing about the manner of access, which was the error.
+  - `NseDocumentFetcher` remains built, tested and **unwired**. It is not reachable from
+    any entry point.
+- **Owner instruction, 2026-10-20: remove the code, not just halt it.** Done. Deleted:
+  `adapters/news/nse_announcements.py`, `adapters/news/nse_documents.py`,
+  `ports/document_source.py`, `FilingsPort`, `FilingsIngest` (with `IngestReport` and
+  `SuspiciousFiling`), `FakeFilings`, `FakeDocuments`, `tests/adapters/test_nse_documents.py`,
+  `tests/application/test_news_ingest.py`, `scripts/verify/step_1_5a.py`, and the `pypdf`
+  dependency. `scripts/verify/step_0_6.py` drops to 19 ports.
+  **The earlier plan to keep the poller as unreachable code was overruled and that is the
+  better call** - unreachable code is still code a future session can switch on, and the
+  compliance reasoning lives in `config/news_sources.yaml` where it will actually be read.
+  `nse_announcements.py` is recoverable from git history (committed at 49a7255) if a
+  licensed route ever arrives; `nse_documents.py` was never committed and is gone.
+- **Verified after removal:** the only modules that can make an HTTP request are the three
+  Dhan adapters (api/auth/images.dhan.co - paid and licensed), the Telegram client
+  (api.telegram.org - the owner's own bot), and `adapters/news/rss.py`, whose hosts come
+  from `config/news_sources.yaml` where the `feeds` list contains SEBI alone. The
+  `excluded` list is never read by any code path. `make check` clean, 1,161 tests.
+- **Owner instruction, 2026-10-20: delete the stored filings too.** Done, and the search
+  for copies found three more places than the table:
+  - `filings`: **1,946 rows deleted, 0 remain.** No triggers on the table, so a plain
+    DELETE sufficed. `articles` (27 SEBI rows, permitted) untouched and verified.
+  - **Ten of eleven backup dumps contained the `filings` table** - confirmed with
+    `pg_restore -l`, not assumed. A fresh dump was taken *first* so the system was never
+    without a backup, proven to contain 0 filing rows and to still hold `bars_1d` and
+    `articles`, and `make restore-drill` passed against it (19 tables, 24,871 rows, archive
+    digest matched). The ten older dumps were then deleted.
+  - **`data/labels/news_catalysts.csv` held 175 of 200 rows of filing text** - the step 3.2
+    labelling sheet, drawn from the archive. Checked first that **0 labels had been filled
+    in**, so no human work was lost, then deleted.
+  - `domain/filing_subjects.py` **kept**: it is NSE's controlled subject vocabulary
+    ("Credit Rating", "Resignation of Director/KMP/SMP") used as a classification lookup,
+    plus a docstring describing the old stub format. Category labels, not filing content,
+    and needed if a licensed route ever arrives.
+- **One copy could not be removed and needs a decision.** `cycle_responses` holds **123
+  payloads whose `evidence_quote` / `supporting_quote` is a verbatim one-line excerpt from
+  a filing** ("X has informed the Exchange about Y"). The table carries
+  `trg_cycle_responses_no_update_delete`, an append-only trigger that blocks DELETE by
+  design - it is what makes the cost ledger tamper-evident. Removing those rows means
+  dropping a safety guard and losing the audit trail for the ₹4.15 cycle. My view: the
+  excerpts are one-line derived fragments and the audit trail is worth more, but that is a
+  judgement about someone else's risk, so it is Ajay's call.
+- **Consequence: `verify 3_2` can no longer pass.** `subject_router_decides_most_filings`
+  now reports "no filings in the archive to measure against" (it degraded honestly rather
+  than crashing), and the 200 hand-labelled items were to be drawn from that archive, so
+  that check is permanently unachievable without a licensed filings source.
+- **Consequence to be clear about:** Setup A's catalyst source is now SEBI's RSS alone -
+  25 articles over 3 days against 1,946 filings. The catalyst gates are not merely
+  unblocked-pending-documents any more; they have almost no input at all.
+- **Status:** open — collection halted, two questions left (stored rows, unblock route)
+  **Owner:** Ajay · **Blocks:** ISS-040, ISS-025, the catalyst gates
+
+### ISS-042 — Four sources are in use whose terms have never been read
+- **Found:** 2026-10-20, applying CLAUDE.md rule 11 to what is already running
+- **Severity:** correctness (compliance debt, not a data defect)
+- **Symptom:** ISS-041 was found by being asked, not by a check. Applying the same
+  standard to every other outbound call leaves four sources whose terms no session has
+  read. Under rule 11 the default on silence is blocked, so each needs a written finding.
+
+| Source | What we do with it | Status |
+|---|---|---|
+| Dhan | Paid, licensed market data + option chains | Licence clear. **Long-term storage never asked** |
+| Telegram | Bot API, owner's own bot, outbound only | Bot API terms never read |
+| Anthropic | Commercial API, paid per call | Terms never read |
+| cdnjs | React 18.3.1 `<script>` in the dashboard | Redistribution terms never read |
+
+- **Impact on a trading decision:** the Dhan one is the only one that can cost data. The
+  IV series is irreplaceable (ISS-002) and cannot be rebuilt if a storage clause requires
+  deletion — the same trap found in GFDL's terms, where storage is permitted while the
+  contract lasts and must be deleted on termination. The other three are low-risk but the
+  point of rule 11 is that "low-risk" is a finding, not an assumption.
+- **Ranked by what it would cost to be wrong:** Dhan storage → Anthropic → Telegram →
+  cdnjs. The first is worth asking Dhan support in writing; I offered to draft it.
+- **Not started on purpose:** reading four sets of terms is the work, and rule 11 says the
+  finding is recorded quoted in config before code depends on it. No code change is
+  proposed here — these are all already running.
+- **Status:** open · **Owner:** me (reading), Ajay (the Dhan support question)

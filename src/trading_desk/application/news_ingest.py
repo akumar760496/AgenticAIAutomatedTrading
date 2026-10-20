@@ -28,11 +28,11 @@ from typing import Any
 import yaml
 
 from trading_desk.domain.entities import AliasTable, resolve_entities
-from trading_desk.domain.news import FeedFailure, Filing, NewsArticle
+from trading_desk.domain.news import FeedFailure, NewsArticle
 from trading_desk.domain.similarity import SimilarDocument, group_near_duplicates
 from trading_desk.domain.untrusted import inspect
 from trading_desk.ports.clock import Clock
-from trading_desk.ports.news import FilingsPort, NewsPort
+from trading_desk.ports.news import NewsPort
 from trading_desk.ports.news_store import NewsStorePort
 from trading_desk.ports.notifier import AlertLevel, NotifierPort
 
@@ -49,109 +49,6 @@ DEFAULT_LOOKBACK = timedelta(days=2)
 # acting on is a decision about the research, not about HTTP. import-linter
 # caught it living in the adapter.
 STALE_FEED_DAYS = 3
-
-
-@dataclass(frozen=True)
-class SuspiciousFiling:
-    """A filing whose body reads like a planted instruction (FR-3.9)."""
-
-    filing_id: str
-    symbol: str
-    suspicions: tuple[str, ...]
-
-
-@dataclass
-class IngestReport:
-    """What one poll found, stored, and noticed."""
-
-    fetched: int = 0
-    inserted: int = 0
-    universe_matched: int = 0
-    suspicious: list[SuspiciousFiling] = field(default_factory=list)
-    error: str | None = None
-
-    @property
-    def succeeded(self) -> bool:
-        return self.error is None
-
-    def summary(self) -> str:
-        if self.error is not None:
-            return f"ingest failed: {self.error}"
-        return (
-            f"fetched {self.fetched}, inserted {self.inserted} new, "
-            f"{self.universe_matched} for universe names, "
-            f"{len(self.suspicious)} flagged"
-        )
-
-
-class FilingsIngest:
-    """One poll of the exchange announcement feed."""
-
-    def __init__(
-        self,
-        filings: FilingsPort,
-        store: NewsStorePort,
-        notifier: NotifierPort,
-        clock: Clock,
-        aliases: AliasTable,
-    ) -> None:
-        self._filings = filings
-        self._store = store
-        self._notifier = notifier
-        self._clock = clock
-        self._aliases = aliases
-
-    def run(self, lookback: timedelta = DEFAULT_LOOKBACK) -> IngestReport:
-        since = self._clock.utc_now() - lookback
-
-        try:
-            # No symbol filter: everything in the window is stored, because the
-            # universe changes and uncollected history cannot be recovered.
-            fetched = self._filings.fetch_since(since, [])
-        except Exception as error:  # a feed outage must not crash the scheduler
-            report = IngestReport(error=f"{type(error).__name__}: {str(error)[:150]}")
-            self._notifier.send_alert(AlertLevel.WARNING, report.summary())
-            return report
-
-        report = IngestReport(fetched=len(fetched))
-        report.inserted = self._store.save_filings(fetched)
-        report.universe_matched = sum(1 for filing in fetched if self._matches_universe(filing))
-        report.suspicious = [
-            SuspiciousFiling(
-                filing_id=filing.filing_id,
-                symbol=filing.symbol,
-                suspicions=inspect(filing.body).suspicions,
-            )
-            for filing in fetched
-            if inspect(filing.body).is_suspicious
-        ]
-
-        self._report(report)
-        return report
-
-    def _matches_universe(self, filing: Filing) -> bool:
-        """Whether this filing concerns a universe name.
-
-        Checks the exchange's own symbol first, which is authoritative, and falls
-        back to resolving the prose. The alias path matters for a filing whose
-        subject names a subsidiary or a counterparty.
-        """
-        if filing.symbol in self._aliases.aliases:
-            return True
-        text = f"{filing.subject} {filing.body}"
-        return bool(resolve_entities(text, self._aliases))
-
-    def _report(self, report: IngestReport) -> None:
-        if report.suspicious:
-            # Flagged, not filtered: the rows are stored either way. A story
-            # someone tried to poison is itself information (FR-3.9).
-            self._notifier.send_alert(
-                AlertLevel.WARNING,
-                "Possible planted instructions in: "
-                + ", ".join(f"{item.symbol}/{item.filing_id}" for item in report.suspicious),
-            )
-            return
-        self._notifier.send_alert(AlertLevel.INFO, f"Filings ingest: {report.summary()}")
 
 
 def load_alias_table(raw: dict[str, Any]) -> AliasTable:

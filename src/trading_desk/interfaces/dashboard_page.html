@@ -1,0 +1,290 @@
+<!doctype html>
+<!--
+  Backtest dashboard. One file, React from a CDN, no build step.
+
+  It reads ./latest.json, written by `trading-desk backtest`. It renders whatever
+  strategies that file contains, so a new strategy appears here with no change to
+  this page - which is the point.
+
+  Two columns are deliberately honest rather than complete:
+    - "vs market" is real, from NIFTY's own regime on the entry date.
+    - "vs news" reads unavailable before 2026-10-14, because the filings archive
+      starts then. It is not defaulted to "no".
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backtest Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<style>
+  :root {
+    --bg: #f5f4f0; --panel: #fffefb; --ink: #1b1d1b; --soft: #5e6361;
+    --rule: #dcd9d1; --good: #1f6b4f; --bad: #9c3028; --warn: #8a5a08;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141614; --panel: #1d201e; --ink: #ecebe4; --soft: #9aa09d;
+      --rule: #333830; --good: #6fbfae; --bad: #e0776c; --warn: #d9a443;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    padding: 24px 16px 64px;
+  }
+  .wrap { max-width: 1400px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .stamp { color: var(--soft); font-size: 12px; margin-bottom: 24px; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+  .tabs button {
+    font: inherit; padding: 7px 14px; border: 1px solid var(--rule);
+    background: var(--panel); color: var(--ink); cursor: pointer; border-radius: 2px;
+  }
+  .tabs button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  .desc { background: var(--panel); border: 1px solid var(--rule); padding: 14px 16px; margin-bottom: 18px; }
+  .desc p { margin: 0 0 6px; }
+  .desc .exits { font-family: var(--mono); font-size: 12px; color: var(--soft); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px;
+           background: var(--rule); border: 1px solid var(--rule); margin-bottom: 20px; }
+  .card { background: var(--panel); padding: 12px 14px; }
+  .card .k { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--soft); }
+  .card .v { font-size: 22px; font-variant-numeric: tabular-nums; margin-top: 3px; }
+  .good { color: var(--good); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+  .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
+  .filters select, .filters input {
+    font: inherit; padding: 5px 8px; background: var(--panel);
+    color: var(--ink); border: 1px solid var(--rule); border-radius: 2px;
+  }
+  .count { color: var(--soft); font-size: 12px; }
+  .scroll { overflow-x: auto; border: 1px solid var(--rule); background: var(--panel); }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--soft); font-weight: 400;
+       cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--panel); }
+  td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+  td.why-cell { white-space: normal; min-width: 280px; font-family: var(--mono);
+                font-size: 11.5px; color: var(--soft); }
+  td.chev { color: var(--soft); width: 20px; padding-right: 0; }
+  tr.expandable { cursor: pointer; }
+  tr.detail > td { white-space: normal; background: var(--bg); padding: 14px 16px; }
+  .pill { font-size: 11px; padding: 2px 7px; border: 1px solid currentColor; border-radius: 10px; }
+  .why { margin: 0 0 10px; }
+  .why li { font-family: var(--mono); font-size: 12px; }
+  .fail { border-left: 3px solid var(--bad); padding-left: 12px; }
+  .modes { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin: 18px 0; }
+  .mode { background: var(--panel); border: 1px solid var(--rule); padding: 12px 14px; }
+  .mode .n { font-size: 20px; font-variant-numeric: tabular-nums; }
+  .mode .m { font-family: var(--mono); font-size: 11px; color: var(--bad); }
+  .mode .e { font-size: 12px; color: var(--soft); margin-top: 6px; }
+  .err { background: var(--panel); border-left: 3px solid var(--bad); padding: 16px; }
+</style>
+</head>
+<body>
+<div id="root" class="wrap"></div>
+<script>
+const { useState, useEffect, useMemo, createElement: h } = React;
+
+const pct = (v, digits = 1) => (v == null ? "—" : (v * 100).toFixed(digits) + "%");
+const signed = (v) => (v == null ? "—" : (v >= 0 ? "+" : "") + (v * 100).toFixed(2) + "%");
+
+function Criteria({ result }) {
+  // Read off a real trade rather than declared separately, so the list cannot
+  // drift from what the strategy actually checked.
+  const sample = result.trades[0];
+  if (!sample) return null;
+  return h("div", { style: { marginTop: "10px" } },
+    h("p", { style: { margin: "0 0 4px", fontSize: "12px", fontWeight: 600 } },
+      "Every trade must satisfy all of:"),
+    h("ul", { style: { margin: 0, paddingLeft: "20px" } }, sample.reasons.map((r, i) =>
+      h("li", { key: i, style: { fontFamily: "var(--mono)", fontSize: "11.5px" } },
+        r.name + " — needs " + r.threshold))));
+}
+
+function Cards({ result }) {
+  const trades = result.trades;
+  const wins = trades.filter((t) => t.won).length;
+  const losses = trades.length - wins;
+  const total = trades.reduce((sum, t) => sum + t.net_return, 0);
+  // Colour the success rate against the REALISED breakeven, not the theoretical
+  // one: a strategy can clear the theoretical bar and still lose money.
+  const needed = result.realised_breakeven;
+  const clears = needed != null && result.win_rate != null && result.win_rate > needed;
+  return h("div", { className: "cards" },
+    card("trades executed", trades.length),
+    card("successes", wins, "good"),
+    card("failures", losses, "bad"),
+    card("success rate", pct(result.win_rate), clears ? "good" : "bad"),
+    card("needs to break even", pct(needed), "warn"),
+    card("average win", signed(result.average_win), "good"),
+    card("average loss", signed(-result.average_loss), "bad"),
+    card("expectancy / trade", signed(result.expectancy), result.profitable ? "good" : "bad"),
+    card("verdict", result.profitable ? "profitable" : "loses money", result.profitable ? "good" : "bad"),
+    card("summed return", signed(total), total > 0 ? "good" : "bad"),
+  );
+}
+
+const card = (k, v, cls) =>
+  h("div", { className: "card", key: k },
+    h("div", { className: "k" }, k),
+    h("div", { className: "v " + (cls || "") }, String(v)));
+
+function FailureModes({ result }) {
+  const modes = Object.entries(result.failure_modes || {});
+  if (!modes.length) return null;
+  const byMode = {};
+  result.trades.forEach((t) => { if (!t.won) byMode[t.failure_mode] = t.failure_explanation; });
+  return h("div", null,
+    h("h2", { style: { fontSize: "15px", margin: "22px 0 4px" } }, "Why the losses lost"),
+    h("div", { className: "modes" }, modes.map(([mode, n]) =>
+      h("div", { className: "mode", key: mode },
+        h("div", { className: "n" }, n),
+        h("div", { className: "m" }, mode),
+        h("div", { className: "e" }, byMode[mode] || "")))));
+}
+
+// "why" is a visible column, not a detail-only field. The first question asked of
+// any row is why the trade was taken, and burying it behind a click meant it read
+// as missing.
+const whyText = (t) => t.reasons.map((r) => r.name + " " + r.measured).join("  ·  ");
+
+const COLUMNS = [
+  ["expand", "", () => "\u25b8"],
+  ["symbol", "symbol", (t) => t.symbol],
+  ["direction", "side", (t) => t.direction],
+  ["entry_date", "entry date", (t) => t.entry_date],
+  ["entry_price", "entry", (t) => Number(t.entry_price), true],
+  ["exit_date", "exit date", (t) => t.exit_date],
+  ["exit_price", "exit", (t) => Number(t.exit_price), true],
+  ["sessions_held", "held", (t) => t.sessions_held, true],
+  ["net_return", "net P&L", (t) => t.net_return, true],
+  ["exit_reason", "exit", (t) => t.exit_reason],
+  ["market_direction", "market that day", (t) => t.market_direction],
+  ["against_market", "vs market", (t) => (t.against_market ? "AGAINST" : "with")],
+  ["against_news", "vs news", (t) => t.against_news],
+  ["why", "why this trade was taken", whyText],
+];
+
+function Trades({ result }) {
+  const [sortKey, setSortKey] = useState("entry_date");
+  const [asc, setAsc] = useState(false);
+  const [outcome, setOutcome] = useState("all");
+  const [symbol, setSymbol] = useState("all");
+  const [open, setOpen] = useState(null);
+
+  const symbols = useMemo(
+    () => Array.from(new Set(result.trades.map((t) => t.symbol))).sort(), [result]);
+
+  const rows = useMemo(() => {
+    let out = result.trades.slice();
+    if (outcome === "won") out = out.filter((t) => t.won);
+    if (outcome === "lost") out = out.filter((t) => !t.won);
+    if (outcome === "against") out = out.filter((t) => t.against_market);
+    if (symbol !== "all") out = out.filter((t) => t.symbol === symbol);
+    const col = COLUMNS.find((c) => c[0] === sortKey);
+    const get = col ? col[2] : (t) => t.entry_date;
+    out.sort((a, b) => {
+      const x = get(a), y = get(b);
+      return (x > y ? 1 : x < y ? -1 : 0) * (asc ? 1 : -1);
+    });
+    return out;
+  }, [result, outcome, symbol, sortKey, asc]);
+
+  const sort = (key) => { if (key === sortKey) setAsc(!asc); else { setSortKey(key); setAsc(false); } };
+
+  return h("div", null,
+    h("div", { className: "filters" },
+      h("select", { value: outcome, onChange: (e) => setOutcome(e.target.value) },
+        h("option", { value: "all" }, "all trades"),
+        h("option", { value: "won" }, "successes only"),
+        h("option", { value: "lost" }, "failures only"),
+        h("option", { value: "against" }, "taken against the market")),
+      h("select", { value: symbol, onChange: (e) => setSymbol(e.target.value) },
+        h("option", { value: "all" }, "all instruments"),
+        ...symbols.map((s) => h("option", { key: s, value: s }, s))),
+      h("span", { className: "count" }, rows.length + " of " + result.trades.length + " · click a row for the reasoning")),
+    h("div", { className: "scroll" },
+      h("table", null,
+        h("thead", null, h("tr", null, COLUMNS.map(([key, label]) =>
+          h("th", { key, onClick: () => sort(key) },
+            label + (sortKey === key ? (asc ? " ▲" : " ▼") : ""))))),
+        h("tbody", null, rows.flatMap((t, i) => {
+          const id = t.symbol + t.entry_date + i;
+          const row = h("tr", {
+            key: id, className: "expandable",
+            onClick: () => setOpen(open === id ? null : id),
+          }, COLUMNS.map(([key, , get, isNum]) => {
+            let value = get(t);
+            if (key === "net_return") value = signed(t.net_return);
+            if (key === "expand") value = open === id ? "\u25be" : "\u25b8";
+            const cls = (isNum ? "num " : "") +
+              (key === "why" ? "why-cell " : "") +
+              (key === "expand" ? "chev " : "") +
+              (key === "net_return" ? (t.won ? "good" : "bad") :
+               key === "against_market" && t.against_market ? "warn" : "");
+            return h("td", { key, className: cls.trim() }, String(value));
+          }));
+          if (open !== id) return [row];
+          return [row, h("tr", { key: id + "-d", className: "detail" },
+            h("td", { colSpan: COLUMNS.length },
+              h("p", { style: { margin: "0 0 8px", fontWeight: 600 } },
+                "Criteria that triggered this trade"),
+              h("ul", { className: "why" }, t.reasons.map((r, j) =>
+                h("li", { key: j }, r.name + ": measured " + r.measured + ", needed " + r.threshold))),
+              h("p", { style: { margin: "0 0 8px", fontFamily: "var(--mono)", fontSize: "12px" } },
+                "stop " + t.stop_level + " · target " + t.target_level + " · exited by " + t.exit_reason),
+              t.won
+                ? h("p", { className: "good", style: { margin: 0 } }, t.failure_explanation)
+                : h("div", { className: "fail" },
+                    h("p", { style: { margin: "0 0 4px", fontFamily: "var(--mono)", fontSize: "12px" } },
+                      t.failure_mode),
+                    h("p", { style: { margin: 0 } }, t.failure_explanation))))];
+        })))));
+}
+
+function App() {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+  const [active, setActive] = useState(0);
+
+  useEffect(() => {
+    fetch("./latest.json?t=" + Date.now())
+      .then((r) => { if (!r.ok) throw new Error("latest.json returned " + r.status); return r.json(); })
+      .then(setData)
+      .catch((e) => setError(e.message));
+  }, []);
+
+  if (error) return h("div", { className: "err" },
+    h("h1", null, "No results to show"),
+    h("p", null, error),
+    h("p", null, "Run a backtest first: ", h("code", null, "uv run trading-desk backtest")));
+  if (!data) return h("p", null, "loading…");
+
+  const result = data.strategies[active];
+  return h("div", null,
+    h("h1", null, "Backtest Dashboard"),
+    h("p", { className: "stamp" },
+      "generated " + new Date(data.generated_at).toLocaleString() +
+      " · " + data.strategies.length + " strategy(ies) · refresh after a new run"),
+    h("div", { className: "tabs" }, data.strategies.map((s, i) =>
+      h("button", { key: s.name, "aria-pressed": i === active, onClick: () => setActive(i) },
+        s.name + " (" + s.trade_count + ")"))),
+    h("div", { className: "desc" },
+      h("p", null, result.description),
+      h("p", { className: "exits" }, "exits: " + result.exits +
+        " · instruments: " + (result.trades_indices ? "indices" : "stocks")),
+      h(Criteria, { result })),
+    h(Cards, { result }),
+    h(FailureModes, { result }),
+    h("h2", { style: { fontSize: "15px", margin: "22px 0 10px" } }, "Every trade"),
+    h(Trades, { result }));
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(h(App));
+</script>
+</body>
+</html>

@@ -23,7 +23,7 @@ from tests.fakes.journal import FakeJournal
 from tests.fakes.llm import FakeLlm
 from tests.fakes.llm_ledger import FakeLlmLedger
 from tests.fakes.market_data import FakeMarketData
-from tests.fakes.news import FakeFilings, FakeNews
+from tests.fakes.news import FakeNews
 from tests.fakes.news_store import FakeNewsStore
 from tests.fakes.notifier import FakeNotifier
 from tests.fakes.option_chain import FakeOptionChain
@@ -37,7 +37,6 @@ __all__ = [
     "FakeChat",
     "FakeCycleStore",
     "FakeExpiryStore",
-    "FakeFilings",
     "FakeHistory",
     "FakeJobLog",
     "FakeJournal",
