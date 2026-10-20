@@ -218,3 +218,57 @@ issue is still evidence: it records a failure mode that was real once and can re
 - **Fixed:** 2026-10-19 — both 4xx paths now include `description`, passed through
   `redact()` so an error body cannot become the next rule-8 leak.
 - **Status:** closed · **Owner:** me
+
+### ISS-034 — The daily cycle reads the oldest 500 filings, never the newest
+- **Found:** 2026-10-20, while answering "you read 500 articles and took no action?"
+- **Severity:** correctness — it is the reason the system cannot produce an idea
+- **Symptom:** the 19 Oct cycle classified 59 genuine catalysts and produced 0
+  candidates. The briefing said "0 candidate(s), all rejected:" and then listed
+  nothing, because nothing ever reached the nine gates.
+- **Cause:** `SELECT_FILINGS` in `adapters/store/news_repository.py` is
+  `ORDER BY filed_at, filing_id LIMIT :limit` — ascending. With 1,544 filings and
+  `DEFAULT_ARTICLE_LIMIT = 500` the cycle reads 14-15 Oct and never sees 16-19 Oct.
+- **Measured:** of the 500 rows it read, **0** fell inside the recency gate's
+  2-session window. The newest 500 span 16-19 Oct and contain 25 such rows.
+- **Impact:** every catalyst fails `catalyst_recency` (<= 2 trading sessions) before
+  any judgement is made, so no idea can ever be briefed. It worsens as the archive
+  grows: at 3,000 filings the cycle would read month-old news and still cost ~Rs 4/day
+  while appearing to work.
+- **Status:** open · **Blocks:** 3.9 — there is no point observing a system that
+  cannot produce output
+- **Fixed:** 2026-10-20 (uncommitted) — both `SELECT_ARTICLES` and `SELECT_FILINGS`
+  now take the newest `limit` rows in a subquery and return them oldest-first, so
+  `read_archive`'s stated contract and the dedup grouping are unchanged.
+- **Verified:** `verify 1_5a` gained `the_read_reaches_the_newest_filing`, which is
+  only meaningful once the archive outgrows the limit and says so when it has not.
+  It passes on 1,946 filings against a limit of 500, reading through 2026-10-20.
+
+### ISS-035 — The news agent never receives the universe, so it pays to classify the whole market
+- **Found:** 2026-10-20, measuring how much of the archive is reachable
+- **Severity:** correctness — a cost defect, not a wrong answer
+- **Symptom:** 196 billed calls on the 19 Oct cycle, of which the overwhelming
+  majority classified companies that are not in the universe and cannot be traded.
+- **Cause:** `NewsAgent.__init__` takes a classifier, an analyst and an alias table.
+  **It is never given the universe.** Its drop counter is labelled
+  `"no universe instrument named"`, but the check is `if not symbols` — "did we
+  resolve any symbol at all", not "is it one of ours". Filings arrive from the
+  exchange with the company already identified, so `symbols` is never empty for a
+  filing and the filter is dead code on the primary source. The universe is applied
+  later, in `_catalysts_in_universe`, which runs **after** the money is spent.
+- **Measured:** the archive holds filings for **804 distinct companies** against a
+  26-name universe. 43 of 1,544 rows (2.8%) name a tradable symbol. Of the newest
+  500 rows, 20 do.
+- **Impact:** ~97% of LLM spend is wasted, and the waste scales with the archive
+  rather than with the universe. The module docstring states the intended behaviour
+  ("an article mentioning no universe instrument is dropped before anything is paid
+  for"), so this is a missing argument, not a design change.
+- **Status:** open · **Blocks:** nothing, but it multiplies the cost of every cycle
+- **Fixed:** 2026-10-20 (uncommitted) — the universe is now a parameter of
+  `NewsAgent.run`, taken from `CycleRequest.universe` by the strategist graph, and
+  applied before dedup so a non-universe story is never even a dedup candidate. An
+  empty universe raises rather than silently dropping everything (rule 6).
+- **Verified:** five induced tests in `TestTheUniverseFilterRunsBeforeTheMoney`,
+  including a filing for a real listed company that is not ours (0 billed calls) and
+  an article naming one of ours plus three others (1 billed call, not 4).
+  `verify 3_2` 12/14 and `verify 3_4` 17/17 — the two 3_2 failures are the
+  pre-existing 200-label task, not this change.

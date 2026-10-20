@@ -53,6 +53,10 @@ CYCLE = "verify-3-2"
 SETUPS_PATH = Path("config/setups.yaml")
 ALIASES = AliasTable(aliases={"RELIANCE": ("reliance industries", "reliance")})
 
+# Every fixture that names a company names this one (ISS-035: the pipeline
+# only pays for symbols the universe can trade).
+UNIVERSE = frozenset({"RELIANCE"})
+
 MIN_HELD_OUT_ACCURACY = 0.90
 REQUIRED_LABEL_COUNT = 200
 
@@ -142,7 +146,7 @@ def _injection_changes_nothing() -> tuple[bool, str]:
     for name, article in forms.items():
         client = FakeLlm()
         client.queue(_none())
-        report = _agent(client).run([article], CYCLE)
+        report = _agent(client).run([article], CYCLE, UNIVERSE)
         if article.article_id not in report.suspicious_articles:
             unflagged.append(name)
         if report.catalysts or report.dropped != {"not a catalyst": 1}:
@@ -167,7 +171,7 @@ def _the_fence_cannot_be_closed_early() -> tuple[bool, str]:
     )
     client = FakeLlm()
     client.queue(_none())
-    _agent(client).run([article], CYCLE)
+    _agent(client).run([article], CYCLE, UNIVERSE)
     sent = client.calls[0][1]
     closers = sent.count("<<<END_UNTRUSTED_DOCUMENT>>>")
     return closers == 1, f"{closers} fence terminator(s) in the prompt after a planted one"
@@ -178,7 +182,7 @@ def _dedup_on_a_multi_outlet_story() -> tuple[bool, str]:
     nothing - a wire story is byte-identical and any hash would catch it."""
     client = FakeLlm()
     client.queue(_earnings("secured an order worth Rs 4,500 crore"), _impact())
-    report = _agent(client).run(fixtures.syndicated_story(), CYCLE)
+    report = _agent(client).run(fixtures.syndicated_story(), CYCLE, UNIVERSE)
     one_story = report.stories_after_dedup == 1
     return one_story and report.llm_calls == EXPECTED_CALLS_PER_STORY, (
         f"3 articles (one reworded) -> {report.stories_after_dedup} story, "
@@ -191,7 +195,7 @@ def _hallucinated_evidence_is_caught() -> tuple[bool, str]:
     fabrication without having to judge the classification itself."""
     client = FakeLlm()
     client.queue(_earnings("the board declared a special dividend"))
-    report = _agent(client).run([fixtures.clean_earnings()], CYCLE)
+    report = _agent(client).run([fixtures.clean_earnings()], CYCLE, UNIVERSE)
     caught = report.dropped.get("evidence quote not found in the article") == 1
     return caught and not report.catalysts, (
         "an ungrounded quote downgraded the label to NONE"
@@ -276,7 +280,7 @@ def _an_unlinked_article_costs_nothing() -> tuple[bool, str]:
         "orphan-verify", "An unlisted firm raises funding", "No listed name here.", symbols=()
     )
     client = FakeLlm()
-    report = _agent(client).run([orphan], CYCLE)
+    report = _agent(client).run([orphan], CYCLE, UNIVERSE)
     return not client.calls, (
         f"{len(client.calls)} model calls for an unlinkable article; "
         f"dropped as: {list(report.dropped)}"

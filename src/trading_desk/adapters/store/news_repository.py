@@ -55,23 +55,39 @@ INSERT_ARTICLE = text(
 )
 
 
+# The newest `limit` rows, handed back oldest-first.
+#
+# ISS-034: this used to be a plain `ORDER BY published_at LIMIT :limit`, which is
+# the *oldest* rows. Once the archive grew past the limit the cycle read only its
+# own history and every catalyst failed the recency gate. The inner query picks
+# the recent end; the outer one restores chronological order, because
+# `read_archive` promises oldest-first and dedup grouping relies on it.
 SELECT_ARTICLES = text(
     """
-    SELECT article_id, headline, body, url, publisher, source_tier,
-           published_at, ingested_at, instrument_symbols
-    FROM articles
+    SELECT * FROM (
+        SELECT article_id, headline, body, url, publisher, source_tier,
+               published_at, ingested_at, instrument_symbols
+        FROM articles
+        ORDER BY published_at DESC, article_id DESC
+        LIMIT :limit
+    ) AS recent
     ORDER BY published_at, article_id
-    LIMIT :limit
     """
 )
 
 
+# The newest `limit` rows, oldest-first. Same reason as SELECT_ARTICLES above,
+# and this is the query ISS-034 was actually found on: 1,544 filings, a limit of
+# 500, and the cycle read 14-15 Oct while 16-19 Oct sat unread.
 SELECT_FILINGS = text(
     """
-    SELECT filing_id, symbol, subject, body, url, filed_at, ingested_at
-    FROM filings
+    SELECT * FROM (
+        SELECT filing_id, symbol, subject, body, url, filed_at, ingested_at
+        FROM filings
+        ORDER BY filed_at DESC, filing_id DESC
+        LIMIT :limit
+    ) AS recent
     ORDER BY filed_at, filing_id
-    LIMIT :limit
     """
 )
 

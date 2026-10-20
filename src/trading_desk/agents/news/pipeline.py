@@ -10,9 +10,16 @@ same answer every time it runs.
 **Stage order is a cost decision as much as a correctness one.** Deduping
 *before* classifying means five outlets carrying one announcement cost one
 model call rather than five. Entity linking before classifying means an article
-mentioning no universe instrument is dropped before anything is paid for. On a
+naming nothing in the universe is dropped before anything is paid for. On a
 typical day that is the difference between a few hundred calls and a few
 thousand.
+
+**The universe arrives with the run, and an empty one raises.** ISS-035: the agent used
+to check only whether *some* symbol resolved, which is always true for a filing
+because the exchange names the company. The archive holds 804 companies against a
+26-name universe, so ~97% of the spend bought classifications of names that could
+never be traded. The filter now compares against the universe itself, and runs
+before dedup.
 
 **A dropped article is counted, never silently discarded.** `PipelineReport`
 carries a reason tally, because "the briefing had no ideas" and "the entity
@@ -86,19 +93,38 @@ class NewsAgent:
         self._aliases = aliases
         self._threshold = similarity_threshold
 
-    def run(self, articles: list[NewsArticle], cycle_id: str) -> PipelineReport:
+    def run(
+        self, articles: list[NewsArticle], cycle_id: str, universe: frozenset[str]
+    ) -> PipelineReport:
+        """Catalysts for `universe`, and a tally of everything dropped.
+
+        `universe` is a parameter rather than constructor state because
+        `CycleRequest` already carries the day's universe. Holding a second copy
+        here would let the two drift, and a stale copy would silently classify
+        names we no longer trade.
+        """
+        if not universe:
+            raise ValueError(
+                "news pipeline needs a universe; an empty one drops every article "
+                "and would read as a quiet news day (ISS-035, CLAUDE.md rule 6)"
+            )
+
         dropped: dict[str, int] = {}
         suspicious: list[str] = []
         catalysts: list[Catalyst] = []
         calls = 0
 
-        groups = self._group(articles)
-        by_id = {article.article_id: article for article in articles}
+        # Before grouping, so a non-universe story is not even a dedup candidate
+        # and certainly never reaches a paid call.
+        relevant = self._only_in_universe(articles, universe, dropped)
+
+        groups = self._group(relevant)
+        by_id = {article.article_id: article for article in relevant}
 
         for representative_id, member_ids in groups:
             article = by_id[representative_id]
-            symbols = self._symbols_for(article)
-            if not symbols:
+            symbols = self._universe_symbols(article, universe)
+            if not symbols:  # pragma: no cover - _only_in_universe already dropped these
                 _count(dropped, "no universe instrument named")
                 continue
 
@@ -160,6 +186,33 @@ class NewsAgent:
         ]
         groups = group_near_duplicates(documents, threshold=self._threshold)
         return [(group.representative_id, group.member_ids) for group in groups]
+
+    def _only_in_universe(
+        self, articles: list[NewsArticle], universe: frozenset[str], dropped: dict[str, int]
+    ) -> list[NewsArticle]:
+        """Articles naming at least one instrument we can actually trade.
+
+        ISS-035: this check used to be `if not symbols` further down, which asks
+        "did we resolve any symbol" rather than "is it one of ours". A filing
+        arrives from the exchange with its company already identified, so that
+        test never failed for a filing and every company on the exchange got
+        classified at our expense - 804 of them against a 26-name universe.
+        """
+        kept = []
+        for article in articles:
+            if self._universe_symbols(article, universe):
+                kept.append(article)
+            else:
+                _count(dropped, "no universe instrument named")
+        return kept
+
+    def _universe_symbols(self, article: NewsArticle, universe: frozenset[str]) -> list[str]:
+        """The article's symbols, narrowed to the universe.
+
+        Narrowing matters in the impact loop too: an article naming one of our
+        names and three others would otherwise buy an impact call for each.
+        """
+        return sorted(set(self._symbols_for(article)) & universe)
 
     def _symbols_for(self, article: NewsArticle) -> list[str]:
         """Symbols the article already carried, else whatever the aliases find.

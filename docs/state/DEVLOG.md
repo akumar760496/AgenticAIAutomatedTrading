@@ -989,3 +989,57 @@ services. **Cost: Rs 4.15 for one complete cycle.**
 - **Verified live:** all twelve timetable entries registered, `review`, `score`,
   `calibration` and `health` each delivered their honest empty state, and the sizing
   lock reads "locked: 0 resolved ideas, need 50".
+
+## 2026-10-20 · Pre-3.9 — two cost/correctness fixes, and a measured base rate
+- **Built:** ISS-034 (the archive read took the *oldest* 500 rows) and ISS-035 (the news
+  agent never received the universe, so it paid to classify 804 companies to find 26).
+  Both were found by answering "you read 500 articles and took no action?" — neither was
+  reachable by the 1,140 tests, because both were *correct on a small archive* and only
+  wrong once the data outgrew the limit.
+- **Decision:** the universe is a **run argument**, not constructor state. `CycleRequest`
+  already carries the day's universe; a second copy inside `NewsAgent` could drift, and a
+  stale copy would quietly classify names we no longer trade. Rejected the constructor
+  parameter even though `PortfolioAgent` sets that precedent.
+- **Decision:** `_closed_beyond_the_range` moves from `agents/technical/agent.py` to
+  `domain/indicators.closed_beyond_range`. It is pure maths over bars and belongs there by
+  rule 3, but the real reason is the backtest below: a backtest that re-implements the gate
+  is measuring a different gate. One implementation, two callers.
+- **New scope, declared (rule 10):** `scripts/backtest_technical.py`, a research script
+  measuring `technical_confirm`'s real directional base rate over the 940 trading days of
+  bars already stored. Asked for by Ajay, who wants 90% directional accuracy; docs/07 sets
+  40% as the *failure* line. Neither number is measured, and this is the only validation
+  the existing data can support — a spread's P&L needs option price history, and we hold
+  two days of it (ISS-037).
+- **Decision:** the script reports the gate's hit rate **against the unconditional base
+  rate over the same horizon**, not alone. A gate that is right 55% of the time when any
+  random day is right 54% has no edge, and reporting the 55% by itself would be the most
+  flattering true number available.
+- **Surprised by:** the 20 Oct snapshot refused itself — Dussehra, corroborated by the
+  expiry shift in `holidays.yaml`. The fail-closed guard worked; no IV day was lost.
+- **Follow-up:** ISS-034, ISS-035 closed below; ISS-036 (no market-wide regime input),
+  ISS-037 (the scheduled captures have never run), ISS-038 (`llm_calls` over-counts) open.
+- **Measured, and it is the finding of the session:** `technical_confirm` has **no
+  directional edge** over 22,056 bar-days, and the only two statistically distinguishable
+  cells are *negative* — a bullish breakout on volume is 5.4% *less* likely to be higher
+  in a week than a random day (sigma -2.7). Six of eight cells are indistinguishable from
+  noise. The gate is selective (fires 4.6% of days) and that selectivity buys nothing
+  directional. Logged as ISS-039; it blocks the `setups.yaml` sign-off, which was always
+  `verified: false` and now has its first evidence.
+- **Why the base-rate column was worth the extra code:** the raw bullish hit rates read
+  47-55%, which looks like a working coin-flip-plus signal. Against the base rate for the
+  same days they are *below* it. Printing the hit rate alone would have been the most
+  flattering true number available, and would have sent us tuning thresholds on a signal
+  that points the wrong way.
+- **Trade-level simulation added** (`scripts/backtest_trades.py`), because a directional
+  hit rate says nothing about money. 1,023 stock trades: **37.0% win rate, -0.50%
+  expectancy per trade**; 39 index trades at 23.1% and -0.86%. Breakeven at the realised
+  1.16 win/loss ratio is 46.3%. Only 4 of 24 names are net positive. Appended to ISS-039
+  rather than opened as a new issue - same gate, same conclusion, deeper evidence.
+- **Decision:** a bar whose range contains both the stop and the target is scored as a
+  **stop**. Daily bars cannot order the two, and assuming the favourable fill is the most
+  common way a backtest flatters itself. Worth stating because it is the single assumption
+  most able to move this result.
+- **The exits are mine, not `setups.yaml`'s, and the script says so in its docstring.**
+  Setup A's configured exits are fractions of the spread premium and need option price
+  history we do not have (ISS-037). Anyone reading this later must not mistake 1.0/1.5 ATR
+  for a signed-off rule.

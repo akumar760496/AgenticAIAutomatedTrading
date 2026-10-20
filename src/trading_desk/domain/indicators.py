@@ -33,6 +33,11 @@ DEFAULT_VOLUME_PERIOD = 20
 DEFAULT_FAST_MA = 20
 DEFAULT_SLOW_MA = 50
 
+# The window a breakout is measured against. Matches the `range_20d` signal, and
+# matches DEFAULT_VOLUME_PERIOD so the two halves of Setup A's technical_confirm
+# gate describe the same stretch of history.
+DEFAULT_RANGE_SESSIONS = 20
+
 
 def _gap(first: Price, second: Price) -> Money:
     return Money(abs(first.paise - second.paise))
@@ -161,6 +166,30 @@ def volume_ratio(bars: Sequence[Bar], period: int = DEFAULT_VOLUME_PERIOD) -> fl
 
     average = Decimal(total) / period
     return float(Decimal(bars[-1].volume) / average)
+
+
+def closed_beyond_range(bars: Sequence[Bar], sessions: int = DEFAULT_RANGE_SESSIONS) -> bool | None:
+    """Did the latest bar close outside the range of the ones before it?
+
+    The prior bars exclude today's, which is the whole point: a close compared
+    against a range that contains it can never be outside it, and the gate
+    would quietly never fire.
+
+    Lived in `agents/technical/agent.py` until 2026-10-20. It moved here so the
+    backtest in `scripts/backtest_technical.py` measures the same function
+    production uses - a backtest with its own copy of the rule is measuring a
+    rule nobody trades.
+    """
+    if sessions <= 0:
+        raise ValueError(f"sessions must be positive, got {sessions}")
+    if len(bars) < sessions + 1:
+        return None
+
+    prior = bars[-(sessions + 1) : -1]
+    highest = max(bar.high.paise for bar in prior)
+    lowest = min(bar.low.paise for bar in prior)
+    close = bars[-1].close.paise
+    return close > highest or close < lowest
 
 
 def trend_regime(

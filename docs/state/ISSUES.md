@@ -41,6 +41,10 @@ the difference between ~30 lines a session and ~500.
 | ISS-026 | open | user | The Fundamental agent is blind to promoter pledge and sell-down |
 | ISS-027 | open | user | No sector map exists, so correlated names cannot be detected |
 | ISS-028 | open | user | Two of Setup A's calendar inputs have no source, and both fail open |
+| ISS-036 | open | me | No market-wide regime input: a stock is judged without reference to the index |
+| ISS-037 | open | me | The three scheduled chain captures have never run; only 2 days of IV history exist |
+| ISS-038 | open | me | `PipelineReport.llm_calls` over-counts: it includes free subject-routed classifications |
+| ISS-039 | open | user | Measured: `technical_confirm` has no directional edge, and is negative at 1-2 weeks |
 
 ---
 
@@ -356,7 +360,6 @@ the difference between ~30 lines a session and ~500.
   induced against a temporary config, never the live one.
 - **Status:** closed · **Owner:** me
 
-
 ### ISS-020 — A TimescaleDB restore failed once and will not reproduce
 - **Found:** 2026-10-18, step 1.9, on the first restore drill ever run
 - **Severity:** unknown, which is the problem
@@ -572,3 +575,122 @@ the difference between ~30 lines a session and ~500.
 - **Not fixed yet:** no effect until the archive reaches 30 days, and the fix is a
   scope decision (filter low DTE, or capture a second, further expiry).
 - **Status:** open · **Owner:** me, pending Ajay's call on which fix
+
+### ISS-036 — No market-wide regime input: a stock is judged without reference to the index
+- **Found:** 2026-10-20, from the owner's requirement that ideas respect "prevailing
+  market condition, going up or going down"
+- **Severity:** correctness — a gap in the setup, not a defect in the code
+- **Symptom:** `technical_confirm` measures a 20-day range break and a volume ratio
+  on the stock alone. `SetupACandidate` carries `trend_regime`, which the Technical
+  agent computes **for that stock**. Nothing in the gate chain consults the index.
+- **Impact:** RELIANCE breaking out while NIFTY rolls over is a materially worse
+  idea than the same breakout in an index uptrend, and the nine gates cannot tell
+  the two apart. Both would be briefed with the same confidence.
+- **Not yet a fix.** Adding a gate changes which ideas are briefed, so it needs a
+  DEVLOG decision and a measured base rate first (see the ISS-034 backtest work).
+- **Status:** open · **Blocks:** nothing
+
+### ISS-037 — The three scheduled chain captures have never run; only 2 days of IV history exist
+- **Found:** 2026-10-20, counting the parquet archive while testing the claim that
+  "you have option data"
+- **Severity:** data-correctness — **and the affected data is not recoverable**
+- **Symptom:** `data/chains/` holds two dates, 2026-10-16 and 2026-10-19, with one
+  snapshot per symbol per day, timestamped 23:13 and 18:13 IST. Those are our two
+  manual runs. The scheduled 09:30 / 12:30 / 15:15 captures have produced nothing.
+- **Cause (hypothesis):** `uv run trading-desk run` has never been left running as a
+  daemon. The timetable exists and `verify 3_7` passes; nothing has hosted it.
+- **Impact:** `MIN_SAMPLES = 30` trading days before `iv_rank` returns any value and
+  `DEFAULT_WINDOW = 252` for a meaningful percentile. We have **2**. Until 30 accrue,
+  the IV gate returns NO_DATA and blocks every Setup A candidate that gets that far,
+  and Setup B cannot run at all. An after-close snapshot is also not the intraday
+  reading the series is meant to hold.
+- **Not recoverable:** an option chain cannot be backfilled from any source we have.
+  Every trading day without a capture is permanently absent from the percentile
+  window. This is the only clock in the project that cannot be rewound, which makes
+  it the most urgent item regardless of severity ranking.
+- **Status:** open · **Blocks:** 3.9 sign-off, and every day it stays open costs a day
+
+### ISS-038 — `PipelineReport.llm_calls` over-counts billed calls
+- **Found:** 2026-10-20, writing the ISS-035 induced tests — an assertion on
+  `llm_calls == 1` failed with 2 while the fake client had recorded one call.
+- **Severity:** cosmetic
+- **Symptom:** `NewsAgent.run` does `classified = self._classifier.classify(...)`
+  then `calls += 1` unconditionally. When the exchange subject already decides the
+  catalyst type the classifier answers without calling a model, but the counter
+  still increments.
+- **Impact:** the `model_calls` measurement recorded against the NEWS node in
+  `cycle_nodes` reads high. **Billing is unaffected** — real cost comes from the
+  `llm_calls` ledger table, which records actual requests. So this misleads a
+  human reading the node log, nothing more.
+- **Fix is one line** (increment only when a call was made), deliberately not done
+  inside the ISS-035 change to keep that diff reviewable.
+- **Status:** open · **Blocks:** nothing
+
+### ISS-039 — Measured: `technical_confirm` has no directional edge, and is negative at 1-2 weeks
+- **Found:** 2026-10-20 by `scripts/backtest_technical.py`, the first backtest of any
+  signal in this project. Run because the owner asked for 90% directional accuracy.
+- **Severity:** correctness — it questions the premise of half of Setup A
+- **Method:** the production gate (`domain/setups/setup_a.technical_confirm`) with the
+  live thresholds from `config/setups.yaml`, over 22,056 bar-days: 24 stocks, Jan 2023 to
+  Oct 2026. Window ends at the tested bar, so there is no lookahead. Every hit rate is
+  reported against the unconditional base rate for the same direction, horizon and
+  symbols, because 2023-2026 trended up and a long-biased signal looks good against it.
+- **Measured:** the gate fires on 1,021 of 22,056 bar-days (4.6%) — selective, as intended.
+
+  | direction | horizon | fired | hit rate | base rate | edge | sigma |
+  |---|---|---|---|---|---|---|
+  | BULLISH | 5d | 618 | 47.2% | 52.6% | **-5.4%** | -2.7 |
+  | BULLISH | 10d | 617 | 48.3% | 53.5% | **-5.2%** | -2.6 |
+  | BULLISH | 15d | 617 | 54.1% | 54.9% | -0.8% | -0.4 |
+  | BULLISH | 20d | 617 | 54.6% | 55.7% | -1.1% | -0.6 |
+  | BEARISH | 5d | 403 | 46.9% | 47.4% | -0.5% | -0.2 |
+  | BEARISH | 10d | 399 | 48.4% | 46.5% | +1.9% | +0.7 |
+  | BEARISH | 15d | 387 | 45.0% | 45.1% | -0.1% | -0.1 |
+  | BEARISH | 20d | 382 | 44.8% | 44.3% | +0.5% | +0.2 |
+
+- **Six of eight cells are noise.** The only two distinguishable effects are both
+  **negative**: a bullish close beyond the 20-day range edge on 1.5x volume is *less*
+  likely to be higher in one or two weeks than a randomly chosen day. That is consistent
+  with short-term reversion after a volume spike, and it is the opposite of what a
+  "continuation" setup assumes.
+- **Magnitude is the second problem.** Median forward moves are -0.22% to +0.82%. ISS-023
+  measured trading costs at ~13% of a real spread's best case, so a move of this size
+  would not pay for the structure even when the direction is right.
+- **What it does NOT show:** that Setup A has no edge. This is one gate of nine, and the
+  catalyst gates carry the thesis — `technical_confirm` is only meant to confirm. What it
+  does show is that the confirmation contributes no directional information on its own,
+  so it cannot be the reason an idea is briefed.
+- **Impact on a trading decision:** `config/setups.yaml` is still `verified: false`, and
+  this is the first evidence bearing on it. Three options, none of them mine to pick:
+  keep the gate as a liquidity/participation filter while dropping any claim that it
+  predicts direction; test the catalyst gates the same way once filings carry documents
+  (ISS-025); or re-specify the setup around the reversion the data actually shows.
+- **Trade-level follow-up, 2026-10-20** (`scripts/backtest_trades.py`). The directional
+  test above says nothing about money, so the signal was simulated as a trade: entry at
+  the open *after* the signal, stop 1.0x ATR(14), target 1.5x ATR, 20-session time stop,
+  0.25% round-trip costs. A bar containing both stop and target is scored as a stop,
+  because a daily bar cannot say which came first.
+
+  | | stocks (24) | indices (NIFTY, BANKNIFTY) |
+  |---|---|---|
+  | trades | 1,023 | 39 |
+  | win rate | **37.0%** | **23.1%** |
+  | average win | +2.90% | +1.22% |
+  | average loss | -2.50% | -1.48% |
+  | expectancy per trade | **-0.50%** | **-0.86%** |
+  | exits | 370 target, 638 stop, 15 time | 9 target, 30 stop |
+
+- **The arithmetic that matters:** at a 1.5:1 target-to-stop the breakeven win rate is
+  40%. Realised wins average +2.90% against losses of -2.50%, a ratio of 1.16, which needs
+  **46.3%** to break even. The measured rate is 37.0%. The gap is not a tuning problem; the
+  signal is on the wrong side of its own breakeven.
+- **Only 4 of 24 names are net positive** (MARUTI +15.5%, INFY +13.8%, HCLTECH +8.8%,
+  SUNPHARMA +8.3%) against 20 negative, the worst being ADANIENT -71.9% and HINDALCO
+  -61.6% in summed per-trade returns. With ~40 trades per name none is individually
+  conclusive; the 20-to-4 split is.
+- **And this is the generous version.** It is the *underlying*, with equity costs. Setup A
+  proposes a debit vertical, which pays a bid-ask spread on two legs and bleeds time value
+  daily — ISS-023 put that at ~13% of a spread's best case. The options expression of the
+  same signal is worse than these figures, not better.
+- **Status:** open · **Blocks:** `setups.yaml` sign-off (`verify 2_3`), and any claim about
+  expected hit rate

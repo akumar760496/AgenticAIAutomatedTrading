@@ -4,22 +4,52 @@
 
 ---
 
-**Updated:** 2026-10-19
+**Updated:** 2026-10-20
 **Phase:** 0, 1 and 2 complete. **Phase 3: 3.1 to 3.8 done.** Next is 3.9, deploy
 and observe — which is the real test of Phase 3, because everything so far was
 tested with me present.
 **Package name:** `trading_desk` (decided 2026-10-15)
 
-**Nine things are waiting on you: ISS-021 (delta bands), ISS-022 (capital figure),
-one real contract note, the LLM monthly cap, 200 hand-labelled news items, ISS-026
-(pledge data), ISS-027 (sector map), ISS-028 (the F&O ban list, the only fail-open
-input in the gate chain), and ISS-025 — still the one that matters most.**
+**ISS-039 is now the one that matters most.** The first backtest of any signal in
+this project measured `technical_confirm` over 22,056 bar-days and found **no
+directional edge** — and the only two statistically distinguishable results are
+*negative*: a bullish breakout on 1.5x volume is 5.4% less likely to be higher in a
+week than a randomly chosen day (sigma -2.7). Six of eight cells are noise. Median
+forward moves are 0.2-0.8% against trading costs that ISS-023 put at ~13% of a
+spread's best case. This does not condemn Setup A — the catalyst gates carry the
+thesis and are untested — but the technical half cannot be the reason an idea is
+briefed, and `setups.yaml` sign-off now has evidence to answer to. Three options
+are written up in `ISSUES.md`; the choice is yours.
+
+**Also waiting on you: ISS-021 (delta bands), ISS-022 (capital figure), one real
+contract note, the LLM monthly cap, 200 hand-labelled news items, ISS-026 (pledge
+data), ISS-027 (sector map), ISS-028 (the F&O ban list, the only fail-open input in
+the gate chain), and ISS-025.**
 
 **The system ran end to end on 19 Oct 2026, for real.** Telegram delivers, the
 Anthropic key is in, the universe is backfilled (26/26 names, 24,440 daily bars),
-and one full cycle cost **Rs 4.15** - 196 Haiku calls, zero Opus, because there
-were no proposals to synthesise. It correctly said "no ideas today": 43 of 1,544
-filings name a universe company, and none cleared the catalyst gate.
+and one full cycle cost **Rs 4.15** - 196 Haiku calls, zero Opus.
+
+**That run's "no ideas" was two bugs, both now fixed (20 Oct).** ISS-034: the
+archive read was `ORDER BY filed_at LIMIT 500` — the *oldest* 500 rows — so the
+cycle read 14-15 Oct and never saw 16-19 Oct. Every one of the 59 catalysts it
+found was already outside the 2-session recency window, which is why 0 candidates
+reached the nine gates and the briefing listed no rejections. ISS-035: `NewsAgent`
+was never given the universe, so its own "no universe instrument named" filter
+could not fire on a filing (the exchange always names the company) and it paid to
+classify 804 companies to find 26 — roughly 97% of the spend. Both were correct on
+a small archive and only wrong once the data outgrew the limit, which is why 1,140
+tests never saw them. **Neither is committed; the diff is in your Source Control
+panel.**
+
+**ISS-037 is the urgent one and it is mine.** The scheduled 09:30 / 12:30 / 15:15
+captures have **never run** — `data/chains/` holds two dates, both from our manual
+runs, timestamped after the close. `MIN_SAMPLES` is 30 trading days before `iv_rank`
+returns anything and `DEFAULT_WINDOW` is 252 for a real percentile. We have 2. An
+option chain cannot be backfilled from any source we hold, so every trading day
+without a capture is permanently missing. 20 Oct was Dussehra and the snapshotter
+correctly refused itself; **the next trading day is 21 Oct, and the scheduler needs
+a host before then.**
 
 **What is still missing is a capital figure** in `config/risk.yaml`, which only
 costs you the size line, and the four sign-off numbers below.

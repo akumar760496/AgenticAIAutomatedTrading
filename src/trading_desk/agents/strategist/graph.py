@@ -227,7 +227,14 @@ class StrategistGraph:
 
     def _run_news(self, request: CycleRequest) -> PipelineReport:
         with self._node(request.cycle_id, CycleNode.NEWS) as measured:
-            report = self._news.run(request.articles, str(request.cycle_id))
+            # ISS-035: the universe has to reach the paid stages. Without it the
+            # agent classifies every company on the exchange and the strategist
+            # discards all but these afterwards, for free but too late.
+            report = self._news.run(
+                request.articles,
+                str(request.cycle_id),
+                frozenset(item.symbol for item in request.universe),
+            )
             measured["articles_in"] = str(report.articles_in)
             measured["stories"] = str(report.stories_after_dedup)
             measured["catalysts"] = str(len(report.catalysts))

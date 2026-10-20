@@ -28,6 +28,10 @@ from trading_desk.domain.values import Money
 CYCLE = "cycle-1"
 ALIASES = AliasTable(aliases={"RELIANCE": ("reliance industries", "reliance")})
 
+# Every fixture that names a company names this one (ISS-035: the pipeline
+# only pays for symbols the universe can trade).
+UNIVERSE = frozenset({"RELIANCE"})
+
 
 def _pricing() -> LlmPricing:
     return LlmPricing(
@@ -92,7 +96,7 @@ class TestTheHappyPath:
         client = FakeLlm()
         client.queue(_earnings_label("consolidated net profit rose"), _impact())
 
-        report = _agent(client).run([article], CYCLE)
+        report = _agent(client).run([article], CYCLE, UNIVERSE)
 
         assert len(report.catalysts) == 1
         catalyst = report.catalysts[0]
@@ -104,7 +108,7 @@ class TestTheHappyPath:
         client = FakeLlm()
         client.queue(_none_label())
 
-        report = _agent(client).run([fixtures.routine_commentary()], CYCLE)
+        report = _agent(client).run([fixtures.routine_commentary()], CYCLE, UNIVERSE)
 
         assert report.catalysts == []
         assert report.dropped == {"not a catalyst": 1}
@@ -120,7 +124,7 @@ class TestTheHappyPath:
             _impact(),
         )
 
-        report = _agent(client).run([fixtures.hedged_rumour()], CYCLE)
+        report = _agent(client).run([fixtures.hedged_rumour()], CYCLE, UNIVERSE)
 
         assert report.catalysts[0].credibility.value < 0.7
 
@@ -142,7 +146,7 @@ class TestPlantedInstructions:
         client = FakeLlm()
         client.queue(_none_label())
 
-        report = _agent(client).run([article], CYCLE)
+        report = _agent(client).run([article], CYCLE, UNIVERSE)
 
         # Seen...
         assert article.article_id in report.suspicious_articles
@@ -156,7 +160,7 @@ class TestPlantedInstructions:
         client = FakeLlm()
         client.queue(_none_label())
 
-        _agent(client).run([fixtures.injection_in_the_body()], CYCLE)
+        _agent(client).run([fixtures.injection_in_the_body()], CYCLE, UNIVERSE)
 
         assert len(client.calls) == 1
 
@@ -169,7 +173,7 @@ class TestPlantedInstructions:
         client = FakeLlm()
         client.queue(_none_label())
 
-        _agent(client).run([article], CYCLE)
+        _agent(client).run([article], CYCLE, UNIVERSE)
 
         sent = client.calls[0][1]
         assert sent.count("<<<END_UNTRUSTED_DOCUMENT>>>") == 1
@@ -182,7 +186,7 @@ class TestHallucinatedEvidence:
         client = FakeLlm()
         client.queue(_earnings_label("the board declared a special dividend"))
 
-        report = _agent(client).run([fixtures.clean_earnings()], CYCLE)
+        report = _agent(client).run([fixtures.clean_earnings()], CYCLE, UNIVERSE)
 
         assert report.catalysts == []
         assert report.dropped == {"evidence quote not found in the article": 1}
@@ -195,7 +199,7 @@ class TestHallucinatedEvidence:
             _impact(),
         )
 
-        report = _agent(client).run([fixtures.clean_earnings()], CYCLE)
+        report = _agent(client).run([fixtures.clean_earnings()], CYCLE, UNIVERSE)
 
         assert len(report.catalysts) == 1
 
@@ -207,7 +211,7 @@ class TestDeduplication:
         client = FakeLlm()
         client.queue(_earnings_label("secured an order worth Rs 4,500 crore"), _impact())
 
-        report = _agent(client).run(fixtures.syndicated_story(), CYCLE)
+        report = _agent(client).run(fixtures.syndicated_story(), CYCLE, UNIVERSE)
 
         assert report.articles_in == 3
         assert report.stories_after_dedup == 1
@@ -217,7 +221,7 @@ class TestDeduplication:
         client = FakeLlm()
         client.queue(_earnings_label("secured an order worth Rs 4,500 crore"), _impact())
 
-        report = _agent(client).run(fixtures.syndicated_story(), CYCLE)
+        report = _agent(client).run(fixtures.syndicated_story(), CYCLE, UNIVERSE)
 
         assert report.catalysts[0].corroborating_publishers == 2
         assert report.catalysts[0].also_reported_by == ("Wire B", "Wire C")
@@ -232,7 +236,7 @@ class TestDeduplication:
         client = FakeLlm()
         client.queue(_earnings_label("Same body."), _impact())
 
-        report = _agent(client).run(repeats, CYCLE)
+        report = _agent(client).run(repeats, CYCLE, UNIVERSE)
 
         assert report.catalysts[0].corroborating_publishers == 0
 
@@ -244,7 +248,7 @@ class TestWhatGetsDropped:
         )
         client = FakeLlm()
 
-        report = _agent(client).run([orphan], CYCLE)
+        report = _agent(client).run([orphan], CYCLE, UNIVERSE)
 
         assert client.calls == []
         assert report.dropped == {"no universe instrument named": 1}
@@ -253,7 +257,9 @@ class TestWhatGetsDropped:
         client = FakeLlm()
         client.queue(_none_label())
 
-        lines = "\n".join(_agent(client).run([fixtures.routine_commentary()], CYCLE).as_lines())
+        lines = "\n".join(
+            _agent(client).run([fixtures.routine_commentary()], CYCLE, UNIVERSE).as_lines()
+        )
 
         assert "1 articles in" in lines
         assert "not a catalyst" in lines
@@ -275,7 +281,7 @@ class TestFilingsAreRoutedBySubject:
         client = FakeLlm()
         client.queue(_impact())  # the impact call still runs; classification must not
 
-        report = _agent(client).run([self._filing("Credit Rating")], CYCLE)
+        report = _agent(client).run([self._filing("Credit Rating")], CYCLE, UNIVERSE)
 
         assert len(client.calls) == 1
         assert "Catalyst type already established" in client.calls[0][1]  # the impact one
@@ -285,7 +291,7 @@ class TestFilingsAreRoutedBySubject:
         client = FakeLlm()
         subject = "Certificate under SEBI (Depositories and Participants) Regulations, 2018"
 
-        report = _agent(client).run([self._filing(subject)], CYCLE)
+        report = _agent(client).run([self._filing(subject)], CYCLE, UNIVERSE)
 
         assert client.calls == []
         assert report.catalysts == []
@@ -297,7 +303,7 @@ class TestFilingsAreRoutedBySubject:
         client = FakeLlm()
         client.queue(_none_label())
 
-        _agent(client).run([self._filing("Outcome of Board Meeting")], CYCLE)
+        _agent(client).run([self._filing("Outcome of Board Meeting")], CYCLE, UNIVERSE)
 
         assert len(client.calls) == 1
 
@@ -305,7 +311,7 @@ class TestFilingsAreRoutedBySubject:
         client = FakeLlm()
         client.queue(_impact())
 
-        report = _agent(client).run([self._filing("Credit Rating")], CYCLE)
+        report = _agent(client).run([self._filing("Credit Rating")], CYCLE, UNIVERSE)
 
         assert report.catalysts[0].credibility.value == 1.0
 
@@ -316,6 +322,90 @@ class TestFilingsAreRoutedBySubject:
         client.queue(_none_label())
         masquerade = fixtures.article("fake-1", "Credit Rating", "A news story about ratings.")
 
-        _agent(client).run([masquerade], CYCLE)
+        _agent(client).run([masquerade], CYCLE, UNIVERSE)
 
         assert len(client.calls) == 1
+
+
+class TestTheUniverseFilterRunsBeforeTheMoney:
+    """ISS-035, induced on the real failure.
+
+    The check used to be `if not symbols` - "did we resolve any symbol" rather
+    than "is it one of ours". A filing arrives from the exchange with the
+    company already named, so that test never failed for a filing and every
+    company on the exchange got classified at our expense. Measured on the live
+    archive: filings for 804 distinct companies against a 26-name universe.
+
+    These tests pass a filing that names a real, listed, correctly-resolved
+    company that simply is not ours. The old code paid for it.
+    """
+
+    def _filing_for(self, symbol: str) -> NewsArticle:
+        return fixtures.article(
+            f"filing:{symbol}",
+            "Credit Rating",
+            f"{symbol} has informed the Exchange about a rating upgrade",
+            publisher=f"{symbol} (exchange filing)",
+            tier=SourceTier.EXCHANGE,
+            symbols=(symbol,),
+        )
+
+    def test_a_filing_for_a_company_we_do_not_trade_costs_nothing(self) -> None:
+        client = FakeLlm()
+
+        report = _agent(client).run([self._filing_for("WIPRO")], CYCLE, UNIVERSE)
+
+        assert client.calls == []
+        assert report.catalysts == []
+        assert report.dropped == {"no universe instrument named": 1}
+
+    def test_a_whole_batch_outside_the_universe_costs_nothing(self) -> None:
+        """The shape of the real archive: many names, almost none of them ours."""
+        client = FakeLlm()
+        others = [self._filing_for(symbol) for symbol in ("WIPRO", "CIPLA", "DRREDDY", "GRASIM")]
+
+        report = _agent(client).run(others, CYCLE, UNIVERSE)
+
+        assert client.calls == []
+        assert report.dropped == {"no universe instrument named": 4}
+
+    def test_our_name_is_still_found_when_buried_among_others(self) -> None:
+        """The filter must not be so eager that it drops the one that counts."""
+        client = FakeLlm()
+        client.queue(_impact())
+        batch = [self._filing_for(symbol) for symbol in ("WIPRO", "RELIANCE", "CIPLA")]
+
+        report = _agent(client).run(batch, CYCLE, UNIVERSE)
+
+        assert [catalyst.symbol for catalyst in report.catalysts] == ["RELIANCE"]
+        # One billed call, for the one name we trade. `report.llm_calls` counts
+        # classification attempts including the free subject-routed ones, so the
+        # client's own record is what spend is measured against.
+        assert len(client.calls) == 1
+
+    def test_an_article_naming_one_of_ours_and_three_others_buys_one_impact_call(self) -> None:
+        """Impact is one call per (story, symbol), so the symbol list has to be
+        narrowed too - not just the article list."""
+        client = FakeLlm()
+        client.queue(_impact())
+        shared = fixtures.article(
+            "multi-1",
+            "Credit Rating",
+            "A rating action covering several issuers",
+            publisher="agency (exchange filing)",
+            tier=SourceTier.EXCHANGE,
+            symbols=("WIPRO", "RELIANCE", "CIPLA", "GRASIM"),
+        )
+
+        report = _agent(client).run([shared], CYCLE, UNIVERSE)
+
+        assert [catalyst.symbol for catalyst in report.catalysts] == ["RELIANCE"]
+        assert len(client.calls) == 1
+
+    def test_an_empty_universe_raises_rather_than_reading_as_a_quiet_day(self) -> None:
+        """CLAUDE.md rule 6. A wiring mistake that silences the pipeline must
+        not be indistinguishable from a day with no news."""
+        client = FakeLlm()
+
+        with pytest.raises(ValueError, match="universe"):
+            _agent(client).run([self._filing_for("RELIANCE")], CYCLE, frozenset())

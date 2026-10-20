@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from trading_desk.domain.enums import TrendRegime
 from trading_desk.domain.indicators import (
     average_true_range,
+    closed_beyond_range,
     price_range,
     trend_regime,
     volume_ratio,
@@ -105,7 +106,7 @@ class TechnicalAgent:
         ratio = volume_ratio(bars)
         trend = trend_regime(bars)
         last_close = bars[-1].close if bars else None
-        beyond = _closed_beyond_the_range(bars)
+        beyond = closed_beyond_range(bars, RANGE_SESSIONS)
         move = _move_since(bars, sessions_since_catalyst)
 
         return TechnicalView(
@@ -182,23 +183,6 @@ class TechnicalAgent:
             unavailable=tuple(unavailable),
             notes=tuple(notes),
         )
-
-
-def _closed_beyond_the_range(bars: list[Bar]) -> bool | None:
-    """Did the latest bar close outside the range of the ones before it?
-
-    The prior bars exclude today's, which is the whole point: a close compared
-    against a range that contains it can never be outside it, and the gate
-    would quietly never fire.
-    """
-    if len(bars) < RANGE_SESSIONS + 1:
-        return None
-
-    prior = bars[-(RANGE_SESSIONS + 1) : -1]
-    highest = max(bar.high.paise for bar in prior)
-    lowest = min(bar.low.paise for bar in prior)
-    close = bars[-1].close.paise
-    return close > highest or close < lowest
 
 
 def _move_since(bars: list[Bar], sessions_ago: int | None) -> Money | None:
