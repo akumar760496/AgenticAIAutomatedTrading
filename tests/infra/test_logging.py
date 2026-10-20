@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
 
+import httpx
 import pytest
 from pydantic import SecretStr
 
@@ -98,3 +100,73 @@ def test_string_arguments_are_still_redacted_alongside_numbers() -> None:
     assert isinstance(record.args, tuple)
     assert record.args[0] == REDACTED
     assert record.args[1] == 500
+
+
+class TestANonStringArgumentThatRendersToASecret:
+    """The gap that leaked a live Telegram bot token on 2026-10-19.
+
+    httpx logs `'HTTP Request: %s %s "%s %d %s"'` and passes `request.url` as an
+    `httpx.URL` object. The filter skipped it as "not a string", and the
+    formatter stringified it afterwards - so the token in the URL path reached
+    stderr in full, with every piece of the redaction machinery working as
+    designed and none of it looking at that argument.
+    """
+
+    def test_an_object_whose_text_holds_a_secret_is_redacted(self) -> None:
+        register_secret(SECRET)
+
+        class Url:
+            """Stands in for httpx.URL: not a str, renders to one."""
+
+            def __str__(self) -> str:
+                return f"https://api.telegram.org/bot{SECRET}/sendMessage"
+
+        record = _record('HTTP Request: %s %s "%s %d %s"', ("POST", Url(), "HTTP/1.1", 200, "OK"))
+
+        SecretRedactingFilter().filter(record)
+
+        rendered = record.getMessage()
+        assert SECRET not in rendered
+        assert REDACTED in rendered
+        # The status code must survive as an int, or %d raises.
+        assert isinstance(record.args, tuple)
+        assert record.args[3] == 200
+
+    def test_the_real_httpx_url_type_is_redacted(self) -> None:
+        """Against the actual class, not only a stand-in. If httpx changes how
+        a URL renders, this is what notices."""
+        register_secret(SECRET)
+        url = httpx.URL(f"https://api.telegram.org/bot{SECRET}/sendMessage")
+        record = _record("HTTP Request: %s %s", ("POST", url))
+
+        SecretRedactingFilter().filter(record)
+
+        assert SECRET not in record.getMessage()
+
+    def test_a_clean_object_keeps_its_identity(self) -> None:
+        """Only arguments that actually carry a secret are replaced, so a
+        format specifier still receives the type it was written for."""
+        register_secret(SECRET)
+        value = Decimal("1400.50")
+        record = _record("price %s", (value,))
+
+        SecretRedactingFilter().filter(record)
+
+        assert isinstance(record.args, tuple)
+        assert record.args[0] is value
+
+    def test_an_object_whose_str_raises_does_not_take_the_log_line_down(self) -> None:
+        """Losing the log line would hide the event, which is the thing the
+        filter exists to avoid (it never drops a record)."""
+        register_secret(SECRET)
+
+        class Hostile:
+            def __str__(self) -> str:
+                raise RuntimeError("no")
+
+        hostile = Hostile()
+        record = _record("value %r", (hostile,))
+
+        assert SecretRedactingFilter().filter(record) is True
+        assert isinstance(record.args, tuple)
+        assert record.args[0] is hostile

@@ -24,6 +24,7 @@ class FakeChat:
         self.acknowledged: list[tuple[str, str]] = []
         self.prompts: list[str] = []
         self.polls = 0
+        self.fail_next_acknowledge = False
 
     def queue_button(self, update_id: int, callback_data: str) -> None:
         self.updates.append(
@@ -58,6 +59,15 @@ class FakeChat:
         return [update for update in self.updates if update.update_id > after_update_id]
 
     def acknowledge_button(self, callback_id: str, note: str) -> None:
+        if self.fail_next_acknowledge:
+            # Separate from the other switches because this is the failure that
+            # happens on its own schedule: Telegram refuses to answer a callback
+            # older than about a minute, so any poll that was down produces it.
+            self.fail_next_acknowledge = False
+            raise RuntimeError(
+                "answerCallbackQuery refused: HTTP 400 - Bad Request: query is "
+                "too old and response timeout expired or query ID is invalid"
+            )
         self.acknowledged.append((callback_id, note))
 
     def ask_for_reason(self, prompt: str) -> DeliveryReceipt:

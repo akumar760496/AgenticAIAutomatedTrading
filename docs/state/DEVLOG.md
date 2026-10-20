@@ -894,3 +894,98 @@ migration 0009, and three CLI commands on the timetable at 16:00, 16:15 and 21:0
 - **Follow-up:** `config/setups.yaml` gained `exits`, `credit_exits` and `debit_exits`,
   still `verified: false`. Setup A's five-day time stop existed only in `docs/06` and in
   no config file until today.
+
+## 2026-10-19 · A live bot token reached stderr (ISS-029)
+
+Wiring up Telegram for the first time, `telegram-check` delivered successfully and
+printed the token in full in an httpx log line. Rule 8, broken by our own logging.
+
+- **Cause:** `SecretRedactingFilter._redact_args` redacted only `str` arguments, and
+  httpx passes `request.url` as an `httpx.URL` object. The filter skipped it; the
+  formatter stringified it afterwards. Every piece of the redaction machinery worked
+  as designed and none of it looked at that argument.
+- **Surprised by:** the `str`-only rule was not an oversight. It was added to stop an
+  int being stringified into httpx's `%d` status specifier - a bug the docstring says
+  reached a live run. Correct reasoning about numbers, over-applied to every
+  non-string, and the gap it opened was a credential.
+- **Decision:** redact on the *rendered* text, not the type. `_redact_arg` stringifies
+  any argument and substitutes only when that text contains a registered secret, so a
+  number is still handed to `%d` as a number - its text cannot contain a 40-character
+  token. A `__str__` that raises returns the value untouched rather than dropping the
+  record, because losing the line would hide the event.
+- **Verified:** one test against the real `httpx.URL` type rather than a stand-in, and
+  `telegram-check` re-run with its output grepped for the live token - the line now
+  reads `.../bot***/sendMessage`. 1132 passed.
+- **Follow-up:** token revoked and reissued. `verify 3_5` went 11/13 to **12/13**; the
+  last check needs a real briefing, which needs `ANTHROPIC_API_KEY`.
+- **Worth keeping:** a redaction filter that keys on *type* is guessing which arguments
+  can carry a secret. Only the rendered text knows.
+
+## 2026-10-19 · The first live Telegram session found three bugs the suite could not
+
+Wiring up the bot and tapping one button end to end turned up ISS-029, 030, 031 and 032.
+All four are now fixed, with tests. 1140 passed.
+
+- **The big one (ISS-030): every idle `capture` poll failed.** The httpx read timeout is
+  15s; `getUpdates` asks Telegram to hold the connection for `POLL_SECONDS = 25`. The
+  client gave up while the server waited exactly as asked. It only ever succeeded when
+  an update was already queued - which is why every manual test to date had passed.
+  **In 3.9 this would have produced a FAILED row and a CRITICAL alert every 30 seconds,
+  about 2,880 a day**, looking for all the world like a Telegram outage.
+- **Decision:** derive the socket timeout from the request's own `timeout` field rather
+  than raising the global default. Whatever `POLL_SECONDS` becomes, the socket follows,
+  so the two cannot drift apart again. A test asserts it against the real constant.
+- **Surprised by:** no fake could have caught any of this. A fake answers instantly, so
+  the long poll never happens; a fake never refuses a stale callback. `docs/12` keeps
+  R-checks for exactly this class, and this is the clearest evidence yet of why.
+- **ISS-031: one stale tap discarded the decisions behind it.** Telegram refuses to
+  answer a callback older than about a minute, and the exception escaped `drain()`. The
+  acknowledgement is a toast; the prompt is what captures the decision. A poll that was
+  down for a few minutes makes every queued tap stale at once, so the batch would be
+  lost exactly when the backlog matters most. Now logged, reported, and the flow
+  continues to ask for the reason.
+- **ISS-032: we threw away Telegram's explanation.** The body said "query is too old and
+  response timeout expired"; we surfaced "HTTP 400". Fixed, redacted on the way out.
+- **ISS-029, earlier the same session:** a live bot token reached stderr through an
+  `httpx.URL` argument the redaction filter skipped as "not a string". Separate entry.
+- **Worth keeping:** four bugs in one evening of real use, in code that had 1,132 passing
+  tests. Every one needed a live server, and three of the four were in the error paths
+  rather than the happy path.
+
+## 2026-10-19 (night) · First full live run, end to end
+
+Universe backfilled, first paid cycle run, every command exercised against real
+services. **Cost: Rs 4.15 for one complete cycle.**
+
+- **Backfill: 26/26 instruments, 22,560 bars inserted, 0 without indicators.** The
+  universe blocker is gone - `the_universe_has_the_bar_history_the_proxy_needs` went
+  from 2 of 26 to **26 of 26**. Dhan returned a 429 mid-run; the limiter backed off ten
+  seconds and recovered, which is the first live exercise of that path.
+- **`verify 1_1b` reached PASS 8/8** for the first time: 26/26 instruments captured
+  live, 9,912 rows. It had been waiting for a trading day and a valid token together.
+- **The cycle cost Rs 4.15 and made zero Opus calls.** 196 Haiku triage calls
+  (137 classifier, 59 impact analyst); synthesis never ran because there were no
+  proposals to write up. The expensive tier is only reached when there is something
+  worth paying for, which is the design and now the measurement.
+- **"No ideas today" was the correct answer, with the numbers to show it.** 525 articles
+  in, 379 distinct stories, 59 catalysts out - and **43 of 1,544 filings name a universe
+  company at all** (31 in the last four days). None survived the catalyst gate on type,
+  recency and credibility. docs/06 predicted this: "the not-already-priced gate kills
+  most ideas, which is correct". ISS-025 removes the two most common real catalysts.
+- **Decision deferred, not taken: ISS-033.** 19 Oct was NIFTY expiry, so the nearest
+  expiry chain had zero time value - ATM call Rs 0.05, ATM put at intrinsic, IV ~1-2%.
+  The capture is right and `atm_iv_from_our_archive_is_believable` is right to refuse
+  it. But `atm_iv_series` has no expiry filter, so roughly one day in five would enter
+  the IV-rank window at ~2%. No effect until the archive reaches 30 days. Logged with
+  two candidate fixes; Ajay's call which.
+- **The four fixes from earlier tonight held under real traffic.** The 30-second capture
+  poll ran under the scheduler and wrote nothing and alerted nobody - before ISS-030 it
+  would have produced a FAILED row and a CRITICAL alert on every single fire.
+- **Surprised by:** three capabilities have no entry point. `BackfillService` is called
+  only by `verify 1_4` with two hardcoded instruments, and `_refresh_expiries` and
+  `_take_backup` exist only inside scheduler jobs. Tonight's backfill needed a scratchpad
+  script to call code that already existed. 3.9 produces a runbook, and a runbook cannot
+  say "run X" when there is no X.
+- **Verified live:** all twelve timetable entries registered, `review`, `score`,
+  `calibration` and `health` each delivered their honest empty state, and the sizing
+  lock reads "locked: 0 resolved ideas, need 50".

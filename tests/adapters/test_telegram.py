@@ -17,12 +17,19 @@ import pytest
 
 from tests.fakes import FrozenClock
 from trading_desk.adapters.telegram.chat import TelegramChat, _to_update
-from trading_desk.adapters.telegram.client import TelegramClient, TelegramError
+from trading_desk.adapters.telegram.client import (
+    DEFAULT_TIMEOUT_SECONDS,
+    LONG_POLL_MARGIN_SECONDS,
+    TelegramClient,
+    TelegramError,
+    _timeout_for,
+)
 from trading_desk.adapters.telegram.notifier import (
     MAX_MESSAGE_CHARS,
     TelegramNotifier,
     split_message,
 )
+from trading_desk.application.decision_capture import POLL_SECONDS
 from trading_desk.domain.capture import DecisionAction, parse_callback
 from trading_desk.ports.chat import UpdateKind
 from trading_desk.ports.notifier import AlertLevel
@@ -217,3 +224,35 @@ class TestTheTokenNeverLeaks:
         assert client.call("sendMessage", {})["message_id"] == 5
         expected_attempts = 2
         assert attempts["count"] == expected_attempts
+
+
+class TestALongPollOutlastsItsOwnTimeout:
+    """The bug that made every idle `capture` poll fail on a live run.
+
+    `getUpdates` asks Telegram to hold the connection for `POLL_SECONDS`. The
+    client's read timeout was 15s against a 25s poll, so an idle queue - the
+    normal state - timed out locally every time, while the server was still
+    waiting exactly as asked. It only ever "worked" when an update was already
+    queued, because Telegram returns those immediately.
+
+    No fake could have caught this: a fake answers instantly, so the long poll
+    never happens at all. It took a live run against Telegram with an empty
+    queue, which is why `docs/12` keeps R-checks.
+    """
+
+    def test_the_socket_outlasts_the_poll_it_was_asked_to_wait_for(self) -> None:
+        assert _timeout_for({"timeout": 25}, 15.0) > 25
+
+    def test_the_margin_is_applied_to_the_polls_own_number(self) -> None:
+        assert _timeout_for({"timeout": 25}, 15.0) == 25 + LONG_POLL_MARGIN_SECONDS
+
+    def test_an_ordinary_call_keeps_the_default(self) -> None:
+        """sendMessage carries no `timeout`, and must not wait 35 seconds."""
+        assert _timeout_for({"text": "hello"}, 15.0) == 15.0
+
+    def test_a_short_poll_never_shortens_the_default(self) -> None:
+        assert _timeout_for({"timeout": 1}, 15.0) == 15.0
+
+    def test_the_real_capture_poll_is_survivable(self) -> None:
+        """Against the real constants, so the two cannot drift apart again."""
+        assert _timeout_for({"timeout": POLL_SECONDS}, DEFAULT_TIMEOUT_SECONDS) > POLL_SECONDS

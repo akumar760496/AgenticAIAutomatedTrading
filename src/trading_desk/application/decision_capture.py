@@ -24,6 +24,7 @@ capture dies.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, time
 from uuid import UUID
@@ -49,6 +50,8 @@ NAG_AT_IST = time(10, 0)
 # How long one poll waits on the server before returning empty. Long enough
 # that an idle loop is nearly free, short enough that a shutdown is not stuck.
 POLL_SECONDS = 25
+
+log = logging.getLogger(__name__)
 
 HELP_TEXT = (
     "To record a decision, tap a button on an idea and then *reply* to the "
@@ -118,7 +121,19 @@ class DecisionCapture:
             return
 
         symbol = self._symbol_for(pending.idea_id)
-        self._chat.acknowledge_button(update.callback_id, f"{pending.action.value} - why?")
+
+        # The acknowledgement is the toast on the phone; the prompt is the thing
+        # that actually captures the decision. Telegram refuses to answer a
+        # callback older than about a minute ("query is too old"), so a poll that
+        # was down for a few minutes makes every queued tap un-answerable - and
+        # letting that abort the drain would throw away every decision behind it
+        # to avoid skipping a toast. Induced on a real stale tap, 2026-10-19.
+        try:
+            self._chat.acknowledge_button(update.callback_id, f"{pending.action.value} - why?")
+        except Exception as error:
+            report.unmatched.append(f"could not acknowledge the tap: {error}")
+            log.warning("acknowledge failed for %s, asking for the reason anyway", symbol)
+
         self._chat.ask_for_reason(reason_prompt(pending, symbol))
         report.prompts_sent += 1
 

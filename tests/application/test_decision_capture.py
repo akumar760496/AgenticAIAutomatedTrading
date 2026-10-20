@@ -196,3 +196,48 @@ def test_completeness_reads_the_journal_not_a_counter() -> None:
     result = service.completeness_over([IDEA, second])
 
     assert result.as_line() == "you answered 1 of 2 (50%)"
+
+
+class TestAStaleButtonTap:
+    """Telegram refuses to answer a callback older than about a minute:
+    "query is too old and response timeout expired". Induced on a real tap on
+    2026-10-19, where it aborted the whole drain.
+
+    The acknowledgement is the toast on the phone. The prompt is what actually
+    captures the decision. Losing a batch of decisions to avoid skipping a toast
+    is backwards - and a poll that was down for a few minutes makes *every*
+    queued tap stale at once, which is precisely when the backlog matters most.
+    """
+
+    def test_a_stale_acknowledgement_still_asks_for_the_reason(self) -> None:
+        service, chat, _, _ = _service()
+        chat.fail_next_acknowledge = True
+        chat.queue_button(1, build_callback(DecisionAction.SKIPPED, IDEA))
+
+        report = service.drain()
+
+        assert report.prompts_sent == 1
+        assert len(chat.prompts) == 1
+
+    def test_the_failure_is_reported_rather_than_swallowed(self) -> None:
+        service, chat, _, _ = _service()
+        chat.fail_next_acknowledge = True
+        chat.queue_button(1, build_callback(DecisionAction.SKIPPED, IDEA))
+
+        report = service.drain()
+
+        assert any("could not acknowledge" in item for item in report.unmatched)
+        assert any("too old" in item for item in report.unmatched)
+
+    def test_one_stale_tap_does_not_lose_the_taps_behind_it(self) -> None:
+        """The reason this is a bug and not a cosmetic issue."""
+        service, chat, _, _ = _service()
+        chat.fail_next_acknowledge = True
+        chat.queue_button(1, build_callback(DecisionAction.SKIPPED, IDEA))
+        chat.queue_button(2, build_callback(DecisionAction.TOOK, IDEA))
+
+        report = service.drain()
+
+        assert report.updates_seen == 2
+        assert report.prompts_sent == 2
+        assert report.last_update_id == 2

@@ -142,3 +142,79 @@ issue is still evidence: it records a failure mode that was real once and can re
   The database has been reset since. Nothing to clean up there.
 - **Status:** fixed · **Owner:** me
 
+
+### ISS-029 — A bot token reached stderr through a non-string log argument
+- **Found:** 2026-10-19, running `trading-desk telegram-check` for the first time
+- **Severity:** safety (credential exposure, CLAUDE.md rule 8)
+- **Symptom:** the live Telegram bot token printed in full in an httpx INFO line:
+  `HTTP Request: POST https://api.telegram.org/bot<TOKEN>/sendMessage`
+- **Impact:** the token sat in terminal scrollback and in a session transcript. Anyone
+  holding it can post as the bot. No log file was written (`configure_logging` uses a
+  stderr `StreamHandler` only), so the exposure was scrollback, not disk.
+- **Cause:** `SecretRedactingFilter._redact_args` redacted only `str` arguments. httpx
+  logs `request.url` as an `httpx.URL` object, so the filter skipped it and the
+  formatter stringified it afterwards - every part of the redaction machinery working
+  as designed, and none of it looking at that argument. The `str`-only rule was added
+  deliberately to stop an int being stringified into httpx's `%d` status specifier,
+  and that correct reasoning about numbers was over-applied to every non-string.
+- **Fixed:** 2026-10-19 — `_redact_arg` now stringifies any argument and substitutes
+  only when the rendered text actually contains a registered secret. A number's text
+  can never contain a 40-character token, so `%d` still receives an int. A `__str__`
+  that raises returns the value untouched rather than dropping the record.
+- **Verified:** four tests in `tests/infra/test_logging.py`, one of them against the
+  real `httpx.URL` type rather than a stand-in, plus a re-run of `telegram-check`
+  grepped for the live token: the line now reads `.../bot***/sendMessage`.
+- **Follow-up:** the exposed token was revoked via BotFather `/revoke` and replaced.
+- **Status:** closed · **Owner:** me
+
+### ISS-030 — Every idle `capture` poll failed: the socket timed out before the long poll
+- **Found:** 2026-10-19, first live run of `trading-desk capture` against an empty queue
+- **Severity:** safety-adjacent (the decision path, which docs/10 calls v1's weakest link)
+- **Symptom:** `TelegramError: getUpdates failed after 3 attempts: ReadTimeout`, on every
+  poll with nothing queued.
+- **Cause:** `DEFAULT_TIMEOUT_SECONDS = 15.0` is the httpx read timeout;
+  `POLL_SECONDS = 25` is what `getUpdates` asks Telegram to hold the connection for.
+  The client gave up at 15s while the server waited 25s exactly as asked. The call
+  only ever succeeded when an update was already queued, because Telegram returns
+  those immediately - which is why every earlier manual test passed.
+- **Impact if it had reached 3.9:** the capture poll fires every 30 seconds. Each one
+  would have failed, and the 3.7 guard records a FAILED row and sends a CRITICAL alert
+  on every failure regardless of `log_runs` - roughly **2,880 CRITICAL alerts a day**,
+  with the real symptom looking like a Telegram outage.
+- **Why no test caught it:** a fake answers instantly, so the long poll never happens.
+  This needed a live server and an empty queue.
+- **Fixed:** 2026-10-19 — `_timeout_for` derives the socket timeout from the request's
+  own `timeout` field plus `LONG_POLL_MARGIN_SECONDS`, so the two numbers cannot drift
+  apart again whatever `POLL_SECONDS` becomes. Other calls keep the default.
+- **Verified:** five unit tests, one asserting against the real `POLL_SECONDS`, plus a
+  live idle poll that now holds ~25s and returns `0 update(s)`.
+- **Status:** closed · **Owner:** me
+
+### ISS-031 — One stale button tap discarded every decision behind it
+- **Found:** 2026-10-19, processing a real tap that had sat in the queue
+- **Severity:** data-correctness (silently loses user decisions, FR-7.4)
+- **Symptom:** `TelegramError: answerCallbackQuery refused: HTTP 400`, aborting the
+  whole `drain()`.
+- **Cause:** Telegram refuses to answer a callback older than about a minute
+  ("query is too old and response timeout expired"). `_handle_button` let that
+  exception escape, so one stale tap ended the batch.
+- **Impact:** the acknowledgement is a toast on the phone; the reason prompt is what
+  captures the decision. A poll that was down for a few minutes makes *every* queued
+  tap stale at once, so the batch would be lost precisely when the backlog matters.
+- **Fixed:** 2026-10-19 — a failed acknowledgement is logged, added to the capture
+  report's `unmatched` list, and the flow continues to ask for the reason.
+- **Verified:** three tests, including one proving a stale tap does not lose the taps
+  behind it.
+- **Status:** closed · **Owner:** me
+
+### ISS-032 — Telegram's own error description was discarded on every 4xx
+- **Found:** 2026-10-19, while diagnosing ISS-031
+- **Severity:** reliability (diagnosability, not behaviour)
+- **Symptom:** `answerCallbackQuery refused: HTTP 400` - a status code and nothing else.
+  Telegram's body said `Bad Request: query is too old and response timeout expired or
+  query ID is invalid`, which names both the cause and the fix.
+- **Cause:** `_body` raised on `status_code >= 400` before reaching the branch that
+  reads `description`.
+- **Fixed:** 2026-10-19 — both 4xx paths now include `description`, passed through
+  `redact()` so an error body cannot become the next rule-8 leak.
+- **Status:** closed · **Owner:** me

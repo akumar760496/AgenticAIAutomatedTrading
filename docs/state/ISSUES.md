@@ -19,6 +19,7 @@ the difference between ~30 lines a session and ~500.
 | Issue | Status | Owner | What it is |
 |---|---|---|---|
 | ISS-002 | open | ? | No option-chain history exists |
+| ISS-033 | open | me | Expiry-day chains poison the ATM IV series |
 | ISS-003 | open | user | Read-only Dhan API key availability unconfirmed |
 | ISS-004 | open | ? | Expiry dates shift off Tuesday for holidays |
 | ISS-005 | open, mitigated | me | Access token expires every 24 hours |
@@ -27,7 +28,7 @@ the difference between ~30 lines a session and ~500.
 | ISS-006b | closed | me | Two entry points could archive a non-trading day |
 | ISS-008 | open | me | Muhurat session hours are not modelled |
 | ISS-009 | closed | me | NSE announcements truncate silently without a date range |
-| ISS-010 | closed | user | News articles and near-duplicate detection need provider decisions |
+| ISS-010 | open | user | News articles and near-duplicate detection need provider decisions |
 | ISS-011 | open | me | The near-duplicate threshold is tuned on constructed headlines |
 | ISS-012 | closed | me | Text similarity alone cannot group news, at any threshold |
 | ISS-013 | open, accepted | user | The NSE poller must present a browser User-Agent |
@@ -257,7 +258,11 @@ the difference between ~30 lines a session and ~500.
   Near-duplicate detection uses character-shingle Jaccard rather than embeddings: no model
   download, deterministic, explainable, and it would not have been improved by embeddings
   (see ISS-012).
-- **Status:** closed · **Owner:** user
+- **Status:** open · **Owner:** user — a purchase decision.
+  (The line here read `closed` until 2026-10-19. That was stale: the entry was
+  REOPENED the same day it was closed, and the paragraph above says a licensed API
+  remains the only route to FR-3.2. The struck-through 'Resolved' line is history,
+  not the current state.)
 
 ### ISS-011 — The near-duplicate threshold is tuned on constructed headlines
 - **Found:** 2026-10-18, step 1.5b
@@ -542,3 +547,28 @@ the difference between ~30 lines a session and ~500.
   the only fail-open input in the gate chain. An earnings calendar is harder — there is
   no free authoritative source — and interacts with ISS-025.
 - **Status:** open · **owner: user** — a data-scope decision
+
+### ISS-033 — Expiry-day captures poison the ATM IV series
+- **Found:** 2026-10-19, first universe-wide run of `verify 1_8` after the backfill
+- **Severity:** data-correctness — it moves `iv_rank`, which gates both setups
+- **Symptom:** `atm_iv_from_our_archive_is_believable` failed with NIFTY at **2.1%**
+  against a 5-80% band, while every stock read 17-21%.
+- **Not a capture bug.** 19 Oct is NIFTY expiry (DTE=0) and the snapshotter takes
+  `expiries[0]`. The ATM call printed Rs 0.05 (11 points OTM, no time value) and the
+  ATM put Rs 11.00 (intrinsic is 11.05). An IV near zero is the correct answer for a
+  contract with no time left, so Dhan, the adapter and the archive are all right.
+- **Impact:** `atm_iv_series` takes the last snapshot of each day with **no expiry
+  filter**. NIFTY expires weekly, so about one day in five contributes a ~1-2% reading.
+  When the series switches from the realised-vol proxy to real IV (needs 30 days of
+  history), the percentile window carries a ~20% artificial floor and every normal
+  day's IV rank reads too high. Setup A gates on `max_iv_rank: 60`; Setup B flips
+  regime at 70 and 35. Inflated ranks block Setup A and push Setup B to the credit
+  variant wrongly.
+- **Also latent:** even away from expiry the series compares a 3-DTE IV with a 25-DTE
+  IV. A proper IV-rank series uses a constant-maturity reading, which is a larger
+  piece of work than the expiry filter.
+- **Recoverable?** Yes, unusually for chain data. The raw snapshots are complete and
+  carry their expiry, so this is a derivation to fix, not history that was lost.
+- **Not fixed yet:** no effect until the archive reaches 30 days, and the fix is a
+  scope decision (filter low DTE, or capture a second, further expiry).
+- **Status:** open · **Owner:** me, pending Ajay's call on which fix

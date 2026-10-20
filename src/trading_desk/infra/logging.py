@@ -50,6 +50,26 @@ def redact(text: str) -> str:
     return text
 
 
+def _redact_arg(value: Any) -> Any:
+    """One log argument, redacted only if its text holds a secret.
+
+    Returns the value unchanged when it is clean, so the format specifier it
+    was written for still receives the type it expects.
+    """
+    if isinstance(value, str):
+        return redact(value)
+
+    # Not a string: it may still render to one that carries a secret, which is
+    # exactly how an httpx.URL leaked a bot token. Compare the rendered text.
+    try:
+        rendered = str(value)
+    except Exception:  # a __str__ that raises must not take the log line down
+        return value
+
+    cleaned = redact(rendered)
+    return cleaned if cleaned != rendered else value
+
+
 class SecretRedactingFilter(logging.Filter):
     """Redacts registered secrets from the message and its arguments.
 
@@ -68,22 +88,26 @@ class SecretRedactingFilter(logging.Filter):
 
     @staticmethod
     def _redact_args(args: Any) -> Any:
-        """Redact string arguments only, leaving other types as they are.
+        """Redact any argument whose text contains a secret, whatever its type.
 
-        Non-strings are returned untouched because a number cannot contain a
-        secret, and converting one to str breaks the format specifier it was
-        written for: httpx logs `"%s %d %s"` with an int status, and stringifying
-        it raises "%d format: a real number is required, not str". That bug reached
-        a live run - it never showed up against our own log lines, which only use %s.
+        **A string check is not enough, and that gap leaked a live bot token.**
+        httpx logs `"HTTP Request: %s %s ..."` passing `request.url` as an
+        `httpx.URL` object, not a str. The old filter skipped it as "not a
+        string", and the formatter stringified it afterwards - so the token in
+        the URL path reached stderr in full.
+
+        The rule that replaced it: stringify the argument, and only substitute
+        when that text actually contains a registered secret. That keeps the
+        original behaviour for numbers, which is what the previous version was
+        really protecting - httpx logs the status code with `%d`, and handing
+        `%d` a str raises "a real number is required, not str". A number's text
+        can never contain a 40-character token, so a number is never touched.
         """
         if isinstance(args, dict):
-            return {
-                key: (redact(value) if isinstance(value, str) else value)
-                for key, value in args.items()
-            }
+            return {key: _redact_arg(value) for key, value in args.items()}
         if isinstance(args, tuple):
-            return tuple(redact(value) if isinstance(value, str) else value for value in args)
-        return args
+            return tuple(_redact_arg(value) for value in args)
+        return _redact_arg(args)
 
 
 def configure_logging(level: str = "INFO") -> None:

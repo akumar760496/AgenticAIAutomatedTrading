@@ -15,10 +15,14 @@ one real contract note, the LLM monthly cap, 200 hand-labelled news items, ISS-0
 (pledge data), ISS-027 (sector map), ISS-028 (the F&O ban list, the only fail-open
 input in the gate chain), and ISS-025 — still the one that matters most.**
 
-**Three things now stand between you and a real briefing on your phone:** a
-Telegram bot token and chat id, the `ANTHROPIC_API_KEY`, and a capital figure in
-`config/risk.yaml`. The first two are blockers; the third only costs you the size
-line, which currently reads "unavailable (ISS-022)" every morning by design.
+**The system ran end to end on 19 Oct 2026, for real.** Telegram delivers, the
+Anthropic key is in, the universe is backfilled (26/26 names, 24,440 daily bars),
+and one full cycle cost **Rs 4.15** - 196 Haiku calls, zero Opus, because there
+were no proposals to synthesise. It correctly said "no ideas today": 43 of 1,544
+filings name a universe company, and none cleared the catalyst gate.
+
+**What is still missing is a capital figure** in `config/risk.yaml`, which only
+costs you the size line, and the four sign-off numbers below.
 
 **The system can now run itself, and now scores itself.** `uv run trading-desk run`
 brings up the whole timetable - 08:15 brief, 10:00 nag, a capture poll, 15:45
@@ -33,10 +37,12 @@ size until 50 resolved ideas beat a naive base-rate baseline (FR-7.8). The count
 forecaster that always says 70% and is right 70% of the time scores *zero skill*,
 which is the trap that number was going to walk into.
 
-**Item 8 below matters more than it used to.** The IV-rank service is wired into
-the briefing as of 3.7, and only NIFTY and RELIANCE have daily bars - so the other
-24 names produce no IV rank and die at the volatility gate, visibly, every morning,
-until the universe is backfilled.
+**The universe backfill is done** (19 Oct): 26/26 names, 22,560 bars inserted, 0
+without indicators. Every name can now produce an IV rank. **New in its place:
+ISS-033** - 19 Oct was NIFTY expiry, so that day's chain has no time value and its
+ATM IV reads ~2%. `atm_iv_series` has no expiry filter, so about one day in five
+would enter the IV-rank window at a false floor. Harmless until the archive reaches
+30 days; needs your call on which of two fixes.
 
 **A decision for you on the stack:** `docs/10` names **LangGraph** for the
 strategist graph and I did not use it — the graph is a static six-node DAG and
