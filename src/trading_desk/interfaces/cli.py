@@ -29,6 +29,7 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import Callable
+from datetime import timedelta
 from pathlib import Path
 
 from trading_desk.adapters.backup.postgres_dump import PostgresBackupTool
@@ -38,6 +39,9 @@ from trading_desk.adapters.dhan.client import DhanClient
 from trading_desk.adapters.dhan.instruments import DhanInstrumentMaster
 from trading_desk.adapters.dhan.login import ensure_valid_token, hours_remaining
 from trading_desk.adapters.dhan.token_store import StoredTokenProvider
+from trading_desk.adapters.news.combined import CombinedNewsAdapter
+from trading_desk.adapters.news.drishti import DrishtiNewsAdapter, load_drishti_policy
+from trading_desk.adapters.news.rss import RssNewsAdapter, load_source_policy
 from trading_desk.adapters.notify.logging_notifier import LoggingNotifier
 from trading_desk.adapters.store.bar_repository import PostgresBarStore
 from trading_desk.adapters.store.expiry_repository import PostgresExpiryStore
@@ -91,10 +95,12 @@ from trading_desk.application.universe_builder import (
 )
 from trading_desk.domain.backtest.trade import SimulatedTrade
 from trading_desk.domain.liquidity import rank_by_liquidity
-from trading_desk.domain.news import filing_as_article
+from trading_desk.domain.news import NewsArticle, filing_as_article
 from trading_desk.infra.config import (
+    MissingConfigError,
     load_app_settings,
     load_dhan_settings,
+    load_drishti_settings,
     load_infra_settings,
     load_telegram_settings,
 )
@@ -605,21 +611,115 @@ def _serve_dashboard() -> int:
     return 0
 
 
+NEWS_CHECK_DAYS = 7
+
+
+def _build_news_sources() -> CombinedNewsAdapter:
+    """SEBI's RSS plus Drishti, behind one port.
+
+    Drishti is added only if a key is configured, so the command still runs on a
+    machine that has none rather than failing with a config error.
+    """
+    clock = SystemClock()
+    sources: dict[str, object] = {"SEBI RSS": RssNewsAdapter(load_source_policy(), clock)}
+    try:
+        settings = load_drishti_settings()
+    except MissingConfigError:
+        print("DRISHTI_API_KEY not set - checking SEBI only")
+    else:
+        register_secret(settings.api_key)
+        sources["Drishti"] = DrishtiNewsAdapter(
+            settings.api_key.get_secret_value(), load_drishti_policy(), clock
+        )
+    return CombinedNewsAdapter(sources)  # type: ignore[arg-type]
+
+
+def _check_news() -> int:
+    """Is there enough news about our own names to decide anything on?
+
+    Reads nothing from the database and writes nothing. The point is to answer
+    the question with counts rather than an impression - per-symbol coverage is
+    what tells you whether a source is usable, because a feed can look busy
+    while saying nothing about the twenty-four names you actually trade.
+    """
+    universe = load_universe_request()
+    symbols = sorted(universe.stock_symbols)
+    sources = _build_news_sources()
+    since = SystemClock().utc_now() - timedelta(days=NEWS_CHECK_DAYS)
+
+    print(f"News for {len(symbols)} names over the last {NEWS_CHECK_DAYS} days")
+    articles = sources.fetch_since(since, symbols)
+
+    failures = sources.recent_failures()
+    if failures:
+        print("\nfailures (a source that is down is not a quiet news day):")
+        for failure in failures:
+            print(f"  {failure.name}: {failure.reason}")
+    if sources.every_source_failed():
+        print("\nEvery source failed. No conclusion can be drawn about coverage.")
+        return 1
+
+    if not articles:
+        print("\nNo articles at all. That is a finding, not an empty result.")
+        return 1
+
+    _print_news_coverage(articles, symbols)
+    return 0
+
+
+def _print_news_coverage(articles: list[NewsArticle], symbols: list[str]) -> None:
+    per_symbol: dict[str, int] = dict.fromkeys(symbols, 0)
+    for article in articles:
+        for symbol in article.instrument_symbols:
+            if symbol in per_symbol:
+                per_symbol[symbol] += 1
+
+    covered = [s for s, n in per_symbol.items() if n > 0]
+    tagged = sum(per_symbol.values())
+    bodies = sorted(len(a.body) for a in articles)
+
+    print(f"\n  articles              {len(articles):>6}")
+    print(f"  tagged to our names   {tagged:>6}")
+    print(f"  names covered         {len(covered):>6} of {len(symbols)}")
+    print(f"  body length (chars)   median {bodies[len(bodies) // 2]}, max {bodies[-1]}")
+    print(f"  freshest              {max(a.published_at for a in articles):%Y-%m-%d %H:%M}Z")
+
+    publishers: dict[str, int] = {}
+    tiers: dict[str, int] = {}
+    for article in articles:
+        publishers[article.publisher] = publishers.get(article.publisher, 0) + 1
+        tiers[str(article.source_tier)] = tiers.get(str(article.source_tier), 0) + 1
+    print(f"  publishers            {sorted(publishers.items(), key=lambda p: -p[1])[:5]}")
+    print(f"  credibility tiers     {tiers}")
+
+    silent = sorted(s for s, n in per_symbol.items() if n == 0)
+    if silent:
+        print(f"\n  NO news in {NEWS_CHECK_DAYS}d: {', '.join(silent)}")
+        print("  (a name with no news cannot clear a catalyst gate - that is the point")
+        print("   of printing it, not a bug in the feed)")
+
+    print("\n  busiest names:")
+    for symbol, count in sorted(per_symbol.items(), key=lambda p: -p[1])[:5]:
+        print(f"    {symbol:<12} {count:>3} articles")
+
+
 def main() -> int:
     command = sys.argv[1] if len(sys.argv) > 1 else "run"
 
-    # Before the Dhan settings load: these need a database or a chat, not a
-    # broker. A command that asks for trading credentials it does not use is a
-    # command that cannot be run on a laptop without them.
-    if command == "label-news":
+    # Handled before the Dhan settings load: these need a database, a news
+    # source or a chat, not a broker. A command that asks for trading
+    # credentials it does not use is a command that cannot be run on a laptop
+    # without them.
+    without_broker: dict[str, Callable[[], int]] = {
+        "label-news": _write_label_sheet,
+        "news-check": _check_news,
+        "backtest": _run_backtest,
+        "dashboard": _serve_dashboard,
+    }
+    local = without_broker.get(command)
+    if local is not None:
         configure_logging(load_app_settings().log_level)
-        return _write_label_sheet()
-    if command == "backtest":
-        configure_logging(load_app_settings().log_level)
-        return _run_backtest()
-    if command == "dashboard":
-        configure_logging(load_app_settings().log_level)
-        return _serve_dashboard()
+        return local()
     if command in CHAT_COMMANDS:
         configure_logging(load_app_settings().log_level)
         return _run_chat_command(command)
@@ -643,7 +743,7 @@ def main() -> int:
     print(
         "Usage: trading-desk "
         "[run|snapshot|login|survey|label-news|brief|capture|nag|review|score|"
-        "calibration|health|telegram-check|backtest|dashboard]",
+        "calibration|health|telegram-check|backtest|dashboard|news-check]",
         file=sys.stderr,
     )
     return 2

@@ -62,6 +62,18 @@ class LlmSettings(BaseSettings):
     llm_monthly_cap_inr: int = Field(default=2000, gt=0)
 
 
+class DrishtiSettings(BaseSettings):
+    """Drishti (Manasija) news API. Needed from the news integration onwards.
+
+    One key and nothing else: the caps and tier mapping are market/source policy
+    and live in `config/news_sources.yaml` (CLAUDE.md rule 7), not here.
+    """
+
+    model_config = _config(env_prefix="DRISHTI_")
+
+    api_key: SecretStr
+
+
 class TelegramSettings(BaseSettings):
     """Briefing delivery. The whole of v1's output path. Needed from step 3.5."""
 
@@ -111,6 +123,16 @@ def load_dhan_settings(env_file: str | None = ENV_FILE) -> DhanSettings:
         raise MissingConfigError(
             f"Dhan settings incomplete. Set these in {ENV_FILE}: {', '.join(missing)}"
         ) from None  # from None: the original error can echo field context, not values
+
+
+def load_drishti_settings(env_file: str | None = ENV_FILE) -> DrishtiSettings:
+    try:
+        return DrishtiSettings(_env_file=env_file)
+    except ValidationError as error:
+        missing = _missing_env_names(error, prefix="DRISHTI_")
+        raise MissingConfigError(
+            f"Drishti settings incomplete. Set these in {ENV_FILE}: {', '.join(missing)}"
+        ) from None
 
 
 def load_llm_settings(env_file: str | None = ENV_FILE) -> LlmSettings:

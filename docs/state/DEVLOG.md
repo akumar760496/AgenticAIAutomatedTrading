@@ -1207,3 +1207,100 @@ Unchecked sources still in use, now owed a written finding under this rule: **Te
 read), **cdnjs** (the dashboard's React tag), and **Dhan**, whose paid API is licensed but
 whose long-term-storage position was never asked — the one that matters, because the IV
 series it feeds is irreplaceable.
+
+### 2026-10-20 — evaluated Drishti (Manasija) as a licensed replacement for NSE
+
+Owner asked whether `platform.manasija.in` suits news and company information. It is the
+best-fitting candidate found so far and the first whose terms actively help us: storage
+permitted for licensed use, internal research named as a permitted purpose, derived signals
+owned by us, and an IP indemnity. Recorded quoted in `config/news_sources.yaml` under a new
+`candidates` block rather than in prose, so a session reads it where it chooses sources.
+
+**Not adopted, for one reason.** Their Customer Agreement §1.3 allows the content to be
+*"aggregated from public sources"*. That is the phrase that would cover scraping NSE, which
+is precisely what ISS-041 prohibits us from doing, and paying a third party for it does not
+obviously change the position. They claim "empanelled" vendors but name none and hold no
+visible NSE/BSE authorisation. **This is the ISS-041 mistake offered back to us at
+Rs 2,000/month** — the fix is three written questions, not a subscription, and under rule 11
+that happens before any code.
+
+Also recorded: on the free sandbox tier their privacy policy permits indefinite retention
+and model training on our queries *and outputs*, so the free credits are for checking the
+JSON shape only, never the real universe.
+
+While in the file, corrected its footer, which still claimed NSE announcements were in use
+via a deleted adapter.
+
+### 2026-10-20 — new data source: Drishti news (rule 10 entry, written before the code)
+
+Owner added `DRISHTI_API_KEY` and asked for the news-journal integration. Scope widens by
+one adapter against the existing `NewsPort`; no new port, so the one-fake-per-port
+invariant is untouched.
+
+**Why this source and not another.** ISS-041 left Setup A's catalyst input at 27 SEBI
+articles. Measured against our own 24 names over 30 days, Drishti carries 299 symbol-tagged
+items across **24 of 24** names, from Economic Times, Moneycontrol, Mint and Business
+Standard, on 31 distinct days, with the freshest item 28 minutes old at the time of the
+probe. That is the gap closed, with evidence rather than a brochure.
+
+**It fits the posture `rss.py` already set.** Drishti returns a headline, its own `summary`
+and `long_summary`, the publisher name and a link — **not the publisher's article text**.
+That is the same line `rss.py` draws deliberately: store what is syndicated, never fetch
+the page body. So the body we persist is Drishti's derived summary, and the docstring says
+so, because a future reader must not mistake it for the publisher's prose.
+
+**One genuine mismatch, recorded rather than smoothed over.** `domain/news.py` says "the
+raw body is kept, never a summary", written when the body was an NSE filing's own text.
+No source we may now lawfully read supplies a full body. The field keeps the richest text
+the source permits, which is `long_summary` (median 1,095 chars, max 1,756). The
+credibility scorer reads wording, and summary wording is Drishti's, not the publisher's —
+that is a real loss of signal and it is the price of being inside the terms.
+
+**Three limits found by probing, which bound what may be claimed:**
+- **The archive starts mid-2025.** 2022, 2023 and 2024 return zero rows for both news and
+  announcements; per-symbol news for RELIANCE begins Nov 2025. So catalyst gates can be
+  backtested over ~12 months, not the ~4 years of bars we hold. Better than
+  `NEWS_UNAVAILABLE`, far short of the bar history.
+- **Sentiment is skewed 282 positive / 153 neutral / 51 negative.** A feature that says
+  "positive" 58% of the time is close to constant and must not be treated as an edge until
+  it is measured against outcomes, the way ISS-039 measured `technical_confirm`.
+- **Caps:** `limit` max 50, `symbols` max 20 per call, sandbox 10 rpm / 1,000 per day. Our
+  24 names therefore need two batched calls, which the adapter does rather than the caller.
+
+**Costs, measured not assumed:** news ~1 credit per *page*; announcements 1 credit per row;
+`detailed=true` 2 per row. News is the cheap endpoint and announcements are the expensive
+one, which is the opposite of what the pricing page implies.
+
+**Compliance position is unchanged and still open (ISS-043).** The owner has chosen to
+proceed, which is his call and is recorded as such. The §1.3 "aggregated from public
+sources" question is NOT answered, so this adapter is written so that losing the source
+costs nothing irreplaceable: raw article text is a droppable cache, and anything we derive
+goes in our own tables. Announcements and earnings are deliberately **not** wired yet —
+each needs its own port and its own entry here.
+
+**Built and verified the same day.** `adapters/news/drishti.py` (NewsPort),
+`adapters/news/combined.py` (several sources behind one port, so SEBI and Drishti arrive in
+one pass and syndication counting still works), `DrishtiSettings`, a `drishti:` config block
+and `trading-desk news-check`. 50 new tests. Live run: 169 articles over 7 days, 30 EXCHANGE
+from SEBI and 139 TIER_2 from Drishti, 22 of 24 names covered, HINDUNILVR and KOTAKBANK
+silent - which the command prints, because a name with no news cannot clear a catalyst gate.
+
+**A test caught a real flaw before the live run.** The API key was set as a header on the
+client the adapter builds, so an injected client - every test, and any future caller that
+supplies its own - sent no key at all. It is now attached per request. A guard that
+disappears exactly when someone substitutes the transport is worse than no guard.
+
+**A second bug, found by printing the raw records rather than the summary.** Asked what the
+vendor actually sends, I dumped a real RELIANCE row and its `symbol` field read
+`"RELIANCE:ONGC"`. Multi-company articles are **colon**-separated, while their *request*
+parameter takes commas - so commas are the obvious guess, and the obvious guess silently
+dropped every symbol on every multi-company row. Measured: **55 of 150 rows (37%)** use the
+colon form, including sector stories naming eight banks, which is precisely the kind a
+catalyst gate wants. After the fix the same 7-day window goes from 93 symbol links to
+**168**, and from 22 of 24 names covered to 23; HINDUNILVR was never actually silent.
+
+Worth recording how it was missed: the first coverage probe and the adapter made the *same*
+wrong assumption, so the probe confirmed the adapter instead of testing it. The number
+looked plausible (93 of 169) and nothing failed. It surfaced only when the owner asked what
+the data actually looked like. A measurement that shares a bug with the thing it measures is
+not a measurement.

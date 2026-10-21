@@ -48,6 +48,7 @@ the difference between ~30 lines a session and ~500.
 | ISS-040 | open | user | NSE's terms prohibit systematic/automated data collection; the PDF fetcher must not run |
 | ISS-041 | open | user | The NSE announcements poller is itself automated collection under the same clause |
 | ISS-042 | open | me | Four sources are in use whose terms have never been read |
+| ISS-043 | open | user | Drishti news is WIRED but its sourcing chain is still unverified |
 
 ---
 
@@ -886,3 +887,43 @@ the difference between ~30 lines a session and ~500.
   finding is recorded quoted in config before code depends on it. No code change is
   proposed here — these are all already running.
 - **Status:** open · **Owner:** me (reading), Ajay (the Dhan support question)
+
+### ISS-043 — Drishti (Manasija) could fill the catalyst gap, but its sourcing chain is unverified
+- **Found:** 2026-10-20, owner asked me to evaluate `platform.manasija.in`
+- **Severity:** correctness (a purchase + compliance decision, nothing is wired)
+- **Why it matters:** this is the closest fit to the hole ISS-041 left. Announcements with
+  source PDF citations, news with sentiment, earnings filings with financial fields,
+  conference-call transcripts, block deals — over REST, WebSocket and MCP. Setup A's
+  catalyst gates currently have 27 SEBI articles as their only input.
+- **Terms are the best of any source checked.** Storage permitted for licensed use
+  (CA §4.7, §4.12), internal research explicitly permitted (§3.4), we own our derived
+  signals (§1.6), and they give an IP indemnity (§14). Full quotes are in
+  `config/news_sources.yaml` under `candidates`.
+- **The blocker:** their own Customer Agreement §1.3 defines the content as possibly
+  *"aggregated from public sources"*. That phrase would describe scraping NSE — the exact
+  activity ISS-041 says we may not do — and buying it secondhand does not obviously
+  launder it. The FAQ says "empanelled" vendors but names none, and they make **no**
+  NSE/BSE authorised-vendor claim and are absent from NSE's authorised vendor list where
+  GFDL appears as entry 7.
+- **Three questions to ask before paying** (a)/(b)/(c) are written out in
+  `config/news_sources.yaml`. I offered to draft the email to hello@manasija.in.
+- **Design constraint if adopted:** CA §1.17 requires deleting raw content on
+  termination, but §16 lets us keep Customer Derivatives. So raw announcement text must
+  be treated as a droppable cache and our own derived features stored separately. Built
+  that way, cancelling costs nothing irreplaceable; built the other way it repeats the
+  ISS-041 deletion.
+- **Do not use the free sandbox for real queries:** Privacy Policy §4 — on the free plan,
+  queries and outputs may be retained indefinitely and used for model training.
+- **Cost:** Rs 2,000/month Starter, Rs 10,000/month Pro. **A purchase — needs the owner's
+  decision in advance**, per his standing instruction.
+- **Updated 2026-10-20, same day:** the owner added `DRISHTI_API_KEY` and asked for the
+  news integration. It is built and live (`adapters/news/drishti.py`, `news-check`).
+  **The three questions above are still unanswered** - proceeding is the owner's informed
+  decision, taken after this issue was put to him, and is recorded as such rather than as
+  a resolution. The adapter is written so losing the source costs nothing irreplaceable.
+- **Still on the sandbox plan**, which matters twice: queries and outputs may be retained
+  indefinitely and used for model training (Privacy Policy s4, and the live account
+  reports `allow_no_store_ai: false`), and the quota is 1,000 credits / 10 rpm. Moving to
+  a paid plan fixes both and is a purchase decision.
+- **Status:** open · **Owner:** Ajay (the three questions, and the plan) · **Blocks:**
+  nothing now for news; still blocks announcements/earnings being wired

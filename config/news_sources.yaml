@@ -233,16 +233,147 @@ excluded:
       Business Today returned HTTP 200 with zero parseable items; Zee Business
       404; PIB 403; the Reuters feedburner endpoint is dead.
 
+# ---------------------------------------------------------------------------
+# Drishti (Manasija) news API - IN USE from 2026-10-20, on the owner's decision.
+#
+# Read by adapters/news/drishti.py. The key is DRISHTI_API_KEY in .env.
+#
+# **Everything from this source is TIER_2 by default, and that is deliberate.**
+# Drishti returns its own summary of a publisher's article, never the article.
+# An AI-written precis of an Economic Times report is not an Economic Times
+# report, so the tier reflects the weakest link in the chain rather than the
+# newspaper's standing. Promoting any publisher to TIER_1 is a sign-off
+# decision, not a config tweak - it directly loosens Setup A's credibility gate.
+#
+# Nothing here is ever EXCHANGE tier. Exchange filings are a separate Drishti
+# product and are deliberately not wired; that needs its own port and its own
+# DEVLOG entry.
+#
+# ISS-043 is still open: their Customer Agreement s1.3 allows content to be
+# "aggregated from public sources", and whether any of it is collected from the
+# exchange websites is unanswered. Treat stored rows as a droppable cache.
+# ---------------------------------------------------------------------------
+drishti:
+  base_url: https://developers.manasija.in/v1
+  # Sandbox plan is 10 requests/minute. 6.5s keeps us under it with room to spare.
+  min_interval_seconds: 6.5
+  # 6 pages x 50 rows is 300 articles per symbol batch, comfortably more than
+  # 30 days of news for 20 names (measured: 486 rows for all 24 over 30 days).
+  max_pages_per_batch: 6
+  default_publisher_tier: TIER_2
+  # Left empty on purpose. The four publishers actually seen in the feed are
+  # Economic Times, Money Control, Live Mint and Business Standard; promoting
+  # any of them needs the sign-off described above.
+  publisher_tiers: {}
+  measured_2026_10_20: >-
+    Probed against our own 24-name universe over 30 days before being wired:
+    486 unique rows, all 24 names covered, 31 distinct days, freshest item 28
+    minutes old. (An earlier run of the same probe reported 299 symbol-tagged
+    rows; it split the `symbol` field on commas alone and so dropped every
+    multi-company row. See `_symbols_of` - the real separator is a colon.) Sources were
+    Economic Times 165, Money Control 124, Live Mint 114, Business Standard 83.
+    long_summary ran 301-1,756 characters, median 1,095.
+    Two limits that bound what may be claimed from it: the archive starts
+    mid-2025 (2022, 2023 and 2024 return zero rows, so catalyst gates can be
+    backtested over ~12 months, not the 4 years of bars we hold), and sentiment
+    is skewed 282 positive / 153 neutral / 51 negative, which is close to a
+    constant and must be measured against outcomes before being trusted.
+    Credit cost, measured: news ~1 per page, announcements 1 per row,
+    detailed=true 2 per row.
+
+# ---------------------------------------------------------------------------
+# Candidate vendors - evaluated, NOT in use. Nothing here may be wired up
+# until its open question is answered in writing (CLAUDE.md rule 11).
+# ---------------------------------------------------------------------------
+candidates:
+  - name: Drishti (Manasija Technologies Private Limited, Mangalore)
+    url: https://drishti.manasija.in
+    checked: 2026-10-20
+    terms:
+      - https://drishti.manasija.in/customer-agreement
+      - https://drishti.manasija.in/legal/terms-and-conditions
+      - https://drishti.manasija.in/legal/privacy-policy
+    offers: >-
+      Corporate announcements with source PDF citations, company and market news
+      with sentiment, earnings filings with financial fields, conference-call
+      transcripts, block deals, symbol metadata. REST plus a WebSocket stream
+      and an MCP server. This is almost exactly the shape of the gap ISS-041
+      left behind.
+    price: >-
+      Starter Rs 2,000/month (10,000 credits, 100 symbols, 60 rpm);
+      Pro Rs 10,000/month (50,000 credits, 1,000 symbols). Sandbox is 1,000
+      free credits once. A PURCHASE - needs the owner's say-so in advance.
+    terms_are_good_for_us: >-
+      Unusually clear, and better than every other source checked so far.
+      Customer Agreement s4.7: "Absent a specified limit, Customer may retain
+      Drishti Content as needed for its licensed use." s4.12: "Persistent
+      storage of streamed Drishti Content is permitted to the extent reasonably
+      necessary for Customer's licensed use." s3.4 permits use "for internal
+      business intelligence, research, analytics, monitoring" - which is this
+      project, exactly. s1.6: "Customer owns Customer Derivatives", defined as
+      "analyses, insights, reports, visualizations, applications, features,
+      scores, and signals you create using Drishti Content" - so our gate
+      outputs, labels and scores are ours. They also give an IP indemnity:
+      "Drishti will defend Customer against third-party claims alleging that
+      the Service, used as authorized, infringes".
+    the_catch: >-
+      On termination, s1.17: "Customer must, upon termination or expiration,
+      delete raw or substantially-raw Drishti Content", cached and exported
+      copies included - the same trap found in GFDL's terms. But s16 adds "you
+      may keep Customer Derivatives and content lawfully displayed to End
+      Users". That is a DESIGN CONSTRAINT, not a blocker: store derived
+      features (catalyst class, sentiment, scores, our own labels) in our own
+      tables and treat raw announcement text as a cache we can lose. Done that
+      way, cancelling the subscription costs nothing irreplaceable. Doing it
+      the other way round repeats the ISS-041 deletion.
+    open_question: >-
+      **Where does the data actually come from?** Their FAQ says "empanelled"
+      vendors, which would mean a licensed chain, but names none, and the site
+      makes NO claim of NSE or BSE authorised-vendor status - they are absent
+      from NSE's own authorised realtime data vendors list, where GFDL appears
+      as entry 7. Worse, their own Customer Agreement s1.3 defines Drishti
+      Content as arising "whether originated by Drishti, licensed from third
+      parties, **aggregated from public sources**, or generated by Drishti
+      systems". "Aggregated from public sources" is the phrase that would
+      describe scraping NSE - the precise thing ISS-041 says we may not do, and
+      buying it secondhand does not obviously launder it. Their s1.10 also
+      warns Third-Party Materials "may carry supplier restrictions" without
+      saying which. Ask in writing, before paying:
+      (a) which empanelled vendors supply the announcements and news, and does
+          that chain hold current NSE/BSE agreements;
+      (b) is any part of it collected directly from the exchange websites;
+      (c) does the indemnity in s14 cover a claim by an exchange or a news
+          publisher about the upstream collection.
+      Note their own blog states the right standard unprompted - that a
+      successful API response is not a licence, and entitlements should be
+      confirmed in writing. So asking is in keeping with how they write.
+    do_not_use_sandbox_for_real_queries: >-
+      Privacy Policy s4: on the Sandbox/Free plan, queries, requests, uploads
+      and OUTPUTS "may be retained indefinitely" and used for model training.
+      On paid plans they are "**not** used to train our models or third-party
+      models" and are kept up to 30 days. Our queries reveal the universe and
+      the strategy, so the free tier is for shape-checking the JSON only.
+    status: >-
+      IN USE for news from 2026-10-20, on the owner's decision, via the
+      `drishti:` block above and adapters/news/drishti.py. The entry is kept
+      here because the open question (a)/(b)/(c) is **still unanswered** - it
+      is the evaluation record, not a to-do. Announcements, earnings and
+      concalls remain unwired.
+      Verified live on the sandbox plan: SEBI (30 EXCHANGE rows) and Drishti
+      (139 TIER_2 rows) read together in one pass over 7 days, 22 of 24 names
+      covered.
+
 # What is in use, and why each stands on different ground:
 #
 #   SEBI RSS - above, with its terms quoted and its one limit recorded.
 #
-#   NSE corporate announcements - SEBI LODR Regulation 30 disclosures, fetched
-#   by adapters/news/nse_announcements.py rather than through this file. These
-#   are filings companies are legally REQUIRED to publish for public
-#   dissemination, not a publisher's copyrighted reporting. NSE's robots.txt
-#   permits the path. The open question there is the browser User-Agent their
-#   bot protection forces; see docs/state/ISSUES.md ISS-013.
+#   That is the entire list. NSE corporate announcements were removed on
+#   2026-10-20 (ISS-041): their Terms of Use prohibit "any systematic or
+#   automated data collection activities", the adapter is deleted and the 1,946
+#   stored filings with it. Setup A's catalyst input is now SEBI's RSS alone -
+#   27 articles where there were 1,946 filings - so the catalyst gates are
+#   nearly inputless, and closing that gap is what the candidates block above
+#   is for.
 #
 # News *journalism* remains unavailable to us at any price short of a licensed
 # API. That is a purchase decision and is recorded as ISS-010.

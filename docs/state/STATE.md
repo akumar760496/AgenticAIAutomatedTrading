@@ -31,9 +31,29 @@ excerpt behind an append-only trigger - flagged, Ajay's call, my view is that th
 audit trail is worth more than the fragments. And `verify 3_2` is now permanently
 unpassable, which is the honest state rather than a regression.
 
-**Setup A's catalyst source is now SEBI's RSS alone** - 27 articles against 1,946
-filings. The catalyst gates have almost no input. `EARNINGS_SURPRISE` is renamed to
-`EARNINGS_GROWTH` (his call, 20 Oct).
+**The catalyst gap is largely closed again, by a paid source (ISS-043).** Drishti
+(Manasija) news is wired as of 20 Oct: `adapters/news/drishti.py` behind the
+existing `NewsPort`, with `adapters/news/combined.py` putting SEBI and Drishti
+behind one port so syndication counting still works. `uv run trading-desk
+news-check` is the coverage report. Live: 169 articles over 7 days, 30 EXCHANGE
+from SEBI plus 139 TIER_2 from Drishti, 168 symbol links, 23 of 24 names
+covered (only KOTAKBANK silent).
+
+**Three things to know before trusting it.** Everything from Drishti is TIER_2
+by default on purpose - what they return is their own summary of an article, not
+the article, so the tier reflects the weakest link; promoting a publisher is a
+sign-off. Their archive starts mid-2025, so catalyst gates can be backtested over
+~12 months and not the ~4 years of bars we hold. And sentiment skews 282/153/51
+positive/neutral/negative, which is near-constant and must be measured against
+outcomes the way ISS-039 measured `technical_confirm` before it is used as an edge.
+
+**Still on Drishti's free sandbox plan**, where queries and outputs may be retained
+indefinitely and used for model training, and the quota is 1,000 credits / 10 rpm.
+A paid plan fixes both; it is a purchase decision. The ISS-043 sourcing questions
+are **unanswered** and proceeding was the owner's informed call.
+Announcements, earnings and concalls are deliberately not wired - each needs its
+own port and DEVLOG entry. `EARNINGS_SURPRISE` is renamed to `EARNINGS_GROWTH`
+(his call, 20 Oct).
 
 **CLAUDE.md rule 11, standing instruction from Ajay (20 Oct):** a legal or
 compliance doubt is raised **in that message, before any code is written**, and the
